@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from textblob import TextBlob
 
-# ------------------------------
+# -------------------------------
 # STREAMLIT LAYOUT
 # ------------------------------
 st.set_page_config(page_title="YouTube Comment Sentiment Analyzer", layout="wide")
