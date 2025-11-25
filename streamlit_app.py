@@ -98,50 +98,57 @@ if st.button("Analyze Video"):
     st.subheader("📄 Full Comments Table")
     st.dataframe(df)
 
-    # ------------------------------
-    # SIDE-BY-SIDE GRAPHS
-    # ------------------------------
-    st.subheader("📈 Visual Insights")
+# ------------------------------
+# SIDE-BY-SIDE GRAPHS (UPDATED)
+# ------------------------------
+st.subheader("📈 Visual Insights")
+col1, col2 = st.columns(2)
 
-    col1, col2 = st.columns(2)
+# ---------- SENTIMENT BAR CHART ----------
+with col1:
+    fig1, ax1 = plt.subplots()
+    sentiment_counts = df["sentiment"].value_counts()
 
-    # ---------- SENTIMENT BAR CHART ----------
-    with col1:
-        fig1, ax1 = plt.subplots()
+    colors = {
+        "Positive": "green",
+        "Neutral": "gray",
+        "Negative": "red"
+    }
 
-        sentiment_counts = df["sentiment"].value_counts()
+    sentiment_counts.plot(
+        kind="bar",
+        color=[colors.get(s, "gray") for s in sentiment_counts.index],
+        ax=ax1
+    )
+    ax1.set_title("Sentiment Distribution")
+    ax1.set_xlabel("")
+    ax1.set_ylabel("Count")
+    ax1.tick_params(axis='x', rotation=0)
+    st.pyplot(fig1)
 
-        colors = {
-            "Positive": "green",
-            "Neutral": "gray",
-            "Negative": "red"
-        }
+# ---------- POLARITY HISTOGRAM WITH RED→GREEN BAR COLORS ----------
+with col2:
+    fig2, ax2 = plt.subplots()
 
-        sentiment_counts.plot(kind="bar", color=[colors[s] for s in sentiment_counts.index], ax=ax1)
-        ax1.set_title("Sentiment Distribution")
-        ax1.set_xlabel("")
-        ax1.set_ylabel("Count")
+    # compute histogram manually so we can color each bar
+    vals = df["polarity"].dropna().values
+    bins = 20
+    counts, bin_edges = np.histogram(vals, bins=bins, range=(-1, 1))
 
-        st.pyplot(fig1)
+    # compute bin centers and normalize to 0..1 for colormap
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    norm_centers = (bin_centers + 1) / 2  # map -1..1 -> 0..1
 
-    # ---------- POLARITY HISTOGRAM (RED→GREEN GRADIENT) ----------
-    with col2:
-        fig2, ax2 = plt.subplots()
+    cmap = plt.get_cmap("RdYlGn")  # red->yellow->green
+    bar_colors = [cmap(n) for n in norm_centers]
 
-        # Gradient from red (-1) → yellow (0) → green (1)
-        cmap = plt.get_cmap("RdYlGn")
+    ax2.bar(bin_centers, counts, width=(bin_edges[1]-bin_edges[0]) * 0.95, color=bar_colors, edgecolor="black")
+    ax2.set_title("Polarity Distribution (Red → Green)")
+    ax2.set_xlabel("Polarity (-1 = Negative, +1 = Positive)")
+    ax2.set_ylabel("Frequency")
+    ax2.set_xlim(-1, 1)
+    st.pyplot(fig2)
 
-        # Normalize values to 0–1 range for colormap
-        norm_polarity = (df["polarity"] + 1) / 2
-
-        ax2.scatter(df["polarity"], np.zeros_like(df["polarity"]), c=norm_polarity, cmap=cmap)
-
-        ax2.hist(df["polarity"], bins=20, color="lightgray", edgecolor="black")
-        ax2.set_title("Polarity Distribution")
-        ax2.set_xlabel("Polarity (-1 = Red, +1 = Green)")
-        ax2.set_ylabel("Frequency")
-
-        st.pyplot(fig2)
 
     # ------------------------------
     # TOP 10 TABLES
