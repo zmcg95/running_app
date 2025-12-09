@@ -6,290 +6,233 @@ from textblob import TextBlob
 import matplotlib.pyplot as plt
 import re
 
-# ------------------------------------------------------
+# ----------------------------
 # PAGE SETTINGS
-# ------------------------------------------------------
-st.set_page_config(page_title="YouTube Channel Analyzer", layout="wide")
-st.title("📊 YouTube Channel & Video Sentiment Analyzer")
+# ----------------------------
+st.set_page_config(page_title="YouTube Sentiment Dashboard", layout="wide")
+st.title("📊 YouTube Comment Sentiment Analyzer")
 
-# ------------------------------------------------------
-# USER INPUT
-# ------------------------------------------------------
-api_key = st.text_input("🔑 Enter YouTube API Key", type="password")
-channel_url = st.text_input("📺 Enter YouTube Channel URL")
+# ----------------------------
+# USER INPUTS
+# ----------------------------
+api_key = st.text_input("🔑 Enter Your YouTube API Key", type="password")
+video_url = st.text_input("🎥 Enter YouTube Video URL")
 
-# Extract channel ID from URL
-def extract_channel_id(url):
-    """
-    Supports:
-    - https://www.youtube.com/channel/CHANNEL_ID
-    - https://www.youtube.com/@username  (converted into channel ID)
-    """
-    # Direct channel link
-    match = re.search(r"channel/([a-zA-Z0-9_-]+)", url)
-    if match:
-        return match.group(1)
-
-    # Handle @username to channel ID lookup
-    username_match = re.search(r"youtube.com/@([a-zA-Z0-9_]+)", url)
-    if username_match:
-        username = username_match.group(1)
-        # Convert @username --> channel ID
-        lookup_url = "https://www.googleapis.com/youtube/v3/search"
-        params = {
-            "part": "snippet",
-            "q": username,
-            "type": "channel",
-            "key": api_key,
-            "maxResults": 1
-        }
-        res = requests.get(lookup_url, params=params).json()
-        try:
-            return res["items"][0]["snippet"]["channelId"]
-        except:
-            return None
-
-    return None
-
-
-# ------------------------------------------------------
-# LOAD CHANNEL INFO
-# ------------------------------------------------------
-if st.button("Load Channel"):
-    if not api_key or not channel_url:
-        st.error("Please enter API key AND channel URL.")
+if st.button("Fetch & Analyze"):
+    if not api_key or not video_url:
+        st.error("Please enter BOTH the API key and video URL.")
         st.stop()
 
-    channel_id = extract_channel_id(channel_url)
-
-    if not channel_id:
-        st.error("Could not extract channel ID.")
+    # Extract video ID
+    match = re.search(r"v=([a-zA-Z0-9_-]+)", video_url)
+    if not match:
+        st.error("Invalid YouTube URL format.")
         st.stop()
 
-    # Fetch channel metadata
-    ch_url = "https://www.googleapis.com/youtube/v3/channels"
+    video_id = match.group(1)
+
+    # ----------------------------
+    # FETCH VIDEO METADATA
+    # ----------------------------
+    video_meta_url = "https://www.googleapis.com/youtube/v3/videos"
     params = {
         "part": "snippet,statistics",
+        "id": video_id,
+        "key": api_key
+    }
+    meta_resp = requests.get(video_meta_url, params=params).json()
+
+    if "items" not in meta_resp or len(meta_resp["items"]) == 0:
+        st.error("Could not fetch video metadata.")
+        st.stop()
+
+    snippet = meta_resp["items"][0]["snippet"]
+    stats = meta_resp["items"][0]["statistics"]
+
+    title = snippet.get("title", "Unknown Title")
+    channel_id = snippet.get("channelId")
+    views = int(stats.get("viewCount", 0))
+    likes = int(stats.get("likeCount", 0))
+    comment_count = int(stats.get("commentCount", 0))
+    engagement = ((likes + comment_count) / max(views, 1)) * 100
+
+    # ----------------------------
+    # FETCH CHANNEL SUBSCRIBERS
+    # ----------------------------
+    channel_url = "https://www.googleapis.com/youtube/v3/channels"
+    channel_params = {
+        "part": "statistics",
         "id": channel_id,
         "key": api_key
     }
-    ch_resp = requests.get(ch_url, params=params).json()
+    channel_resp = requests.get(channel_url, params=channel_params).json()
+    subs = int(channel_resp["items"][0]["statistics"]["subscriberCount"])
 
-    try:
-        snippet = ch_resp["items"][0]["snippet"]
-        stats = ch_resp["items"][0]["statistics"]
-    except:
-        st.error("Failed to load channel data.")
-        st.stop()
+    # Custom Score (example formula)
+    custom_score = round(engagement * 0.5 + likes * 0.003, 2)
 
-    title = snippet["title"]
-    thumbnail = snippet["thumbnails"]["high"]["url"]
-    subs = int(stats.get("subscriberCount", 0))
-    total_views = int(stats.get("viewCount", 0))
-    total_videos = int(stats.get("videoCount", 0))
+    thumbnail = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
 
-    # ------------------------------------------------------
-    # DISPLAY CHANNEL KPIs
-    # ------------------------------------------------------
-    st.subheader(f"📺 Channel Overview: **{title}**")
+    # ----------------------------
+    # DISPLAY VIDEO & METRICS
+    # ----------------------------
+    st.subheader("🎬 Video Overview")
+    col_vid, col_meta = st.columns([1, 2])
 
-    colA, colB = st.columns([1, 3])
+    with col_vid:
+        st.image(thumbnail, width=420)
+
+    with col_meta:
+        st.write(f"### {title}")
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("👁️ Views", f"{views:,}")
+        m2.metric("👍 Likes", f"{likes:,}")
+        m3.metric("💬 Comments", f"{comment_count:,}")
+        m4.metric("👥 Subscribers", f"{subs:,}")
+
+        m5, m6 = st.columns(2)
+        m5.metric("📈 Engagement Rate", f"{engagement:.2f}%")
+        m6.metric("🔥 Custom Score", custom_score)
+
+    # ----------------------------
+    # FETCH COMMENTS
+    # ----------------------------
+    comment_url = "https://www.googleapis.com/youtube/v3/commentThreads"
+    params = {
+        "part": "snippet",
+        "videoId": video_id,
+        "key": api_key,
+        "maxResults": 100,
+        "textFormat": "plainText"
+    }
+
+    resp = requests.get(comment_url, params=params).json()
+    comments = [
+        item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+        for item in resp.get("items", [])
+    ]
+
+    st.success(f"Fetched {len(comments)} comments.")
+
+    # ----------------------------
+    # SENTIMENT ANALYSIS
+    # ----------------------------
+    sentiment = []
+    polarities = []
+
+    for c in comments:
+        p = TextBlob(c).sentiment.polarity
+        polarities.append(p)
+
+        if p > 0.05:
+            sentiment.append("Positive")
+        elif p < -0.05:
+            sentiment.append("Negative")
+        else:
+            sentiment.append("Neutral")
+
+    df = pd.DataFrame({
+        "comment": comments,
+        "polarity": polarities,
+        "sentiment": sentiment
+    })
+
+    st.dataframe(df, use_container_width=True)
+
+    # ----------------------------
+    # VISUALS
+    # ----------------------------
+    st.subheader("📈 Visual Insights")
+    colA, colB = st.columns(2)
 
     with colA:
-        st.image(thumbnail, width=250)
+        fig1, ax1 = plt.subplots()
+        df["sentiment"].value_counts().plot(kind="bar", color=["green", "gray", "red"], ax=ax1)
+        ax1.set_title("Sentiment Distribution")
+        ax1.set_ylabel("Count")
+        st.pyplot(fig1)
 
     with colB:
-        m1, m2, m3 = st.columns(3)
-        m1.metric("👥 Subscribers", f"{subs:,}")
-        m2.metric("👁️ Total Views", f"{total_views:,}")
-        m3.metric("🎞️ Total Videos", f"{total_videos:,}")
+        fig2, ax2 = plt.subplots()
+        vals = df["polarity"].values
+        bins = 20
+        counts, edges = np.histogram(vals, bins=bins, range=(-1, 1))
+        centers = (edges[:-1] + edges[1:]) / 2
+        cmap = plt.get_cmap("RdYlGn")
+        bar_colors = [cmap((c + 1) / 2) for c in centers]
 
-    # ------------------------------------------------------
-    # FETCH LAST 50 VIDEOS
-    # ------------------------------------------------------
-    st.subheader("🎬 Recent Videos")
+        ax2.bar(centers, counts, width=(edges[1] - edges[0]) * 0.9, color=bar_colors, edgecolor="black")
+        ax2.set_title("Polarity Distribution")
+        st.pyplot(fig2)
 
-    search_url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
+    # ----------------------------
+    # TOP 10 POS/NEG (without index)
+    # ----------------------------
+    top_pos = df.sort_values("polarity", ascending=False).head(10).reset_index(drop=True)
+    top_neg = df.sort_values("polarity", ascending=True).head(10).reset_index(drop=True)
+
+    st.subheader("🏆 Top Comments")
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.write("### 🌟 Top 10 Positive Comments")
+        st.table(top_pos)
+
+    with c2:
+        st.write("### 💀 Top 10 Negative Comments")
+        st.table(top_neg)
+
+    # ----------------------------
+    # LAST 10 CHANNEL VIDEOS
+    # ----------------------------
+    st.subheader("📺 Channel Recent Performance")
+
+    uploads_url = "https://www.googleapis.com/youtube/v3/search"
+    uploads_params = {
         "part": "snippet",
         "channelId": channel_id,
         "order": "date",
-        "maxResults": 50,
+        "maxResults": 10,
         "type": "video",
         "key": api_key
     }
+    uploads_resp = requests.get(uploads_url, params=uploads_params).json()
 
-    vid_resp = requests.get(search_url, params=params).json()
-    videos = vid_resp.get("items", [])
+    vid_ids = [item["id"]["videoId"] for item in uploads_resp.get("items", [])]
 
-    # ------------------------------------------------------
-    # HORIZONTAL SCROLLING VIDEO STRIP
-    # ------------------------------------------------------
-    st.markdown("""
-        <style>
-        .scroll-row {
-            display: flex;
-            overflow-x: auto;
-            padding: 10px;
-            gap: 20px;
-        }
-        .video-card {
-            min-width: 240px;
-            max-width: 240px;
-            border: 1px solid #ddd;
-            border-radius: 10px;
-            padding: 8px;
-            background: #fafafa;
-            text-align: center;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    # Fetch their stats
+    stats_url = "https://www.googleapis.com/youtube/v3/videos"
+    stats_params = {
+        "part": "statistics",
+        "id": ",".join(vid_ids),
+        "key": api_key
+    }
+    vid_stats = requests.get(stats_url, params=stats_params).json()
 
-    st.write("### 👉 Select a video to analyze")
+    recent_views = [int(v["statistics"].get("viewCount", 0)) for v in vid_stats["items"]]
 
-    # Scroll container
-    st.markdown('<div class="scroll-row">', unsafe_allow_html=True)
+    # ----------------------------
+    # LINE CHART FOR LAST 10 VIDEOS + comparison line
+    # ----------------------------
+    fig3, ax3 = plt.subplots(figsize=(10, 5))
+    ax3.plot(range(1, len(recent_views) + 1), recent_views, marker="o")
+    ax3.axhline(views, color="red", linestyle="--", label="Analyzed Video Views")
 
-    selected_video = None
+    ax3.set_title("Views of Last 10 Channel Videos")
+    ax3.set_xlabel("Recent Videos (Newest → Oldest)")
+    ax3.set_ylabel("View Count")
+    ax3.legend()
 
-    for v in videos:
-        vid = v["id"]["videoId"]
-        thumb = v["snippet"]["thumbnails"]["high"]["url"]
-        title_vid = v["snippet"]["title"]
+    st.pyplot(fig3)
 
-        card_html = f"""
-            <div class="video-card">
-                <img src="{thumb}" width="220">
-                <p><b>{title_vid[:50]}...</b></p>
-                <form action="" method="get">
-                    <button name="video_to_analyze" value="{vid}">Analyze</button>
-                </form>
-            </div>
-        """
-        st.markdown(card_html, unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # ------------------------------------------------------
-    # HANDLE VIDEO SELECTION
-    # ------------------------------------------------------
-    video_to_analyze = st.query_params.get("video_to_analyze", None)
-
-    if video_to_analyze:
-        st.subheader("📊 Video Selected for Analysis")
-        st.write(f"Video ID: **{video_to_analyze}**")
-
-        # Fetch video metadata
-        video_url = "https://www.googleapis.com/youtube/v3/videos"
-        params = {
-            "part": "snippet,statistics",
-            "id": video_to_analyze,
-            "key": api_key
-        }
-        vresp = requests.get(video_url, params=params).json()
-
-        try:
-            vsnip = vresp["items"][0]["snippet"]
-            vstats = vresp["items"][0]["statistics"]
-        except:
-            st.error("Error loading video details.")
-            st.stop()
-
-        vtitle = vsnip["title"]
-        vthumb = f"https://img.youtube.com/vi/{video_to_analyze}/maxresdefault.jpg"
-        vviews = int(vstats.get("viewCount", 0))
-        vlikes = int(vstats.get("likeCount", 0))
-        vcomments = int(vstats.get("commentCount", 0))
-
-        eng_rate = ((vlikes + vcomments) / max(vviews, 1)) * 100
-
-        # Display video section
-        colv1, colv2 = st.columns([1, 2])
-
-        with colv1:
-            st.image(vthumb, width=350)
-
-        with colv2:
-            st.write(f"### {vtitle}")
-            k1, k2, k3 = st.columns(3)
-            k1.metric("👁️ Views", f"{vviews:,}")
-            k2.metric("👍 Likes", f"{vlikes:,}")
-            k3.metric("💬 Comments", f"{vcomments:,}")
-
-            k4, k5 = st.columns(2)
-            k4.metric("📈 Engagement Rate", f"{eng_rate:.2f}%")
-            k5.metric("🔥 Custom Score", round(eng_rate * 0.5 + vlikes * 0.003, 2))
-
-        # ------------------------------------------------------
-        # FETCH VIDEO COMMENTS
-        # ------------------------------------------------------
-        comment_url = "https://www.googleapis.com/youtube/v3/commentThreads"
-        params = {
-            "part": "snippet",
-            "videoId": video_to_analyze,
-            "key": api_key,
-            "maxResults": 100,
-            "textFormat": "plainText"
-        }
-
-        response = requests.get(comment_url, params=params).json()
-        comments = [
-            item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
-            for item in response.get("items", [])
-        ]
-
-        st.success(f"Fetched {len(comments)} comments.")
-
-        # ------------------------------------------------------
-        # SENTIMENT ANALYSIS
-        # ------------------------------------------------------
-        polarity = [TextBlob(c).sentiment.polarity for c in comments]
-        sentiment = [
-            "Positive" if p > 0.05 else "Negative" if p < -0.05 else "Neutral"
-            for p in polarity
-        ]
-
-        df = pd.DataFrame({
-            "comment": comments,
-            "polarity": polarity,
-            "sentiment": sentiment
-        })
-
-        st.subheader("🧾 Comments Dataset")
-        st.dataframe(df)
-
-        # ------------------------------------------------------
-        # VISUALS
-        # ------------------------------------------------------
-        col1, col2 = st.columns(2)
-
-        with col1:
-            fig, ax = plt.subplots()
-            df["sentiment"].value_counts().plot(
-                kind="bar",
-                color=["green", "gray", "red"],
-                ax=ax
-            )
-            ax.set_title("Sentiment Distribution")
-            st.pyplot(fig)
-
-        with col2:
-            fig, ax = plt.subplots()
-            vals = df["polarity"].values
-            counts, edges = np.histogram(vals, bins=20, range=(-1, 1))
-            centers = (edges[:-1] + edges[1:]) / 2
-
-            cmap = plt.get_cmap("RdYlGn")
-            colors = [cmap((c + 1) / 2) for c in centers]
-
-            ax.bar(centers, counts, width=0.09, color=colors, edgecolor="black")
-            ax.set_title("Polarity Distribution")
-            st.pyplot(fig)
-
-        # Download CSV
-        st.download_button(
-            "⬇️ Download CSV",
-            df.to_csv(index=False).encode(),
-            file_name="comments_sentiment.csv",
-            mime="text/csv"
-        )
+    # ----------------------------
+    # DOWNLOAD CSV
+    # ----------------------------
+    st.subheader("⬇️ Download Comment Data")
+    st.download_button(
+        label="Download CSV",
+        data=df.to_csv(index=False).encode(),
+        file_name="sentiment_comments.csv",
+        mime="text/csv"
+    )
