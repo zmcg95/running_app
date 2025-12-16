@@ -187,7 +187,7 @@ if st.button("Analyze Video"):
     # ----------------------------
     # TABLE PREVIEW
     # ----------------------------
-    st.subheader("📝 Caption Preview (Merged)")
+    st.subheader("📝 Caption Preview")
     st.dataframe(df[["time_min", "polarity", "sentiment", "text"]], use_container_width=True)
 
     # ----------------------------
