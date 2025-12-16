@@ -1,3 +1,11 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from textblob import TextBlob
+from youtube_transcript_api import YouTubeTranscriptApi
+from urllib.parse import urlparse, parse_qs
+
 st.subheader("📈 Sentiment Analysis Overview")
 
 col1, col2 = st.columns(2)
