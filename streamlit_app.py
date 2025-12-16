@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from textblob import TextBlob
 from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
+import requests
 
 # ----------------------------
 # PAGE CONFIG
@@ -19,7 +20,7 @@ st.write(
     "Sentiment analysis using **ONLY YouTube captions**.\n\n"
     "• Captions merged for better context (2× original size)\n"
     "• Color-coded sentiment visuals\n"
-    "• No comments, no API keys"
+    "• No comments analyzed (captions only)"
 )
 
 # ----------------------------
@@ -57,21 +58,71 @@ def merge_captions_by_count(df, group_size=2):
         })
     return pd.DataFrame(merged)
 
-# ----------------------------
-# INPUT
-# ----------------------------
-video_url = st.text_input("🔗 Enter YouTube Video URL")
+def get_video_metadata(video_url, api_key):
+    video_id = get_video_id(video_url)
+    url = "https://www.googleapis.com/youtube/v3/videos"
+    params = {"part": "snippet,statistics", "id": video_id, "key": api_key}
+    resp = requests.get(url, params=params).json()
+    if "items" not in resp or len(resp["items"]) == 0:
+        return None
+    snippet = resp["items"][0]["snippet"]
+    stats = resp["items"][0]["statistics"]
+    return {
+        "title": snippet.get("title", "Unknown Title"),
+        "thumbnail": f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+        "views": int(stats.get("viewCount", 0)),
+        "likes": int(stats.get("likeCount", 0)),
+        "comments": int(stats.get("commentCount", 0)),
+        "dislikes": int(stats.get("dislikeCount", 0)) if "dislikeCount" in stats else "N/A"
+    }
 
-if st.button("Analyze Captions"):
+# ----------------------------
+# INPUTS
+# ----------------------------
+col_key, col_url = st.columns([1, 3])
+api_key = col_key.text_input("🔑 YouTube API Key", type="password")
+video_url = col_url.text_input("🔗 YouTube Video URL")
+
+if st.button("Analyze Video"):
 
     if not video_url:
         st.error("Please enter a YouTube video URL.")
         st.stop()
+    if not api_key:
+        st.error("Please enter your YouTube API key.")
+        st.stop()
 
-    # Fetch and merge captions
+    # ----------------------------
+    # FETCH VIDEO METADATA
+    # ----------------------------
+    try:
+        meta = get_video_metadata(video_url, api_key)
+        if not meta:
+            st.error("Could not fetch video metadata. Check API key or video URL.")
+            st.stop()
+    except Exception as e:
+        st.error(f"Error fetching metadata: {e}")
+        st.stop()
+
+    # Display video info at top
+    st.subheader("🎥 Video Overview")
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.image(meta["thumbnail"], use_column_width=True)
+    with col2:
+        st.markdown(f"### {meta['title']}")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("👁️ Views", f"{meta['views']:,}")
+        m2.metric("👍 Likes", f"{meta['likes']:,}")
+        m3.metric("💬 Comments", f"{meta['comments']:,}")
+        m4.metric("👎 Dislikes", meta['dislikes'])
+
+    # ----------------------------
+    # FETCH AND MERGE CAPTIONS
+    # ----------------------------
     try:
         raw_df = get_raw_captions(video_url)
-        df = merge_captions_by_count(raw_df, group_size=2)  # 2× context
+        df = merge_captions_by_count(raw_df, group_size=2)
     except Exception as e:
         st.error(f"Could not fetch captions: {e}")
         st.stop()
@@ -85,7 +136,7 @@ if st.button("Analyze Captions"):
     # ----------------------------
     df["time_min"] = df["start"] / 60
     df["polarity"] = df["text"].apply(lambda x: TextBlob(x).sentiment.polarity)
-    df["intensity"] = df["polarity"].abs()  # sentiment intensity
+    df["intensity"] = df["polarity"].abs()
 
     def label_sentiment(p):
         if p > 0.05:
@@ -97,50 +148,47 @@ if st.button("Analyze Captions"):
 
     df["sentiment"] = df["polarity"].apply(label_sentiment)
     df["rolling_polarity"] = df["polarity"].rolling(window=5, min_periods=1).mean()
-
-    # Color for plots
-    def sentiment_color(p):
-        if p > 0.05:
-            return "green"
-        elif p < -0.05:
-            return "red"
-        else:
-            return "gray"
-
-    df["color"] = df["polarity"].apply(sentiment_color)
+    df["color"] = df["polarity"].apply(lambda p: "green" if p > 0.05 else ("red" if p < -0.05 else "gray"))
+    df["polarity_diff"] = df["polarity"].diff().abs()
 
     # ----------------------------
     # KPI CALCULATIONS
     # ----------------------------
-    # 1. Sentiment Volatility
-    df["polarity_diff"] = df["polarity"].diff().abs()
     volatility = round(df["polarity_diff"].mean(), 3)
-
-    # 2. Positive vs Negative Ratio
     pos_count = (df["sentiment"] == "Positive").sum()
     neg_count = (df["sentiment"] == "Negative").sum()
     pos_neg_ratio = round(pos_count / max(neg_count, 1), 2)
+    avg_polarity = round(df["polarity"].mean(), 3)
+    peak_intensity_time = round(df["time_min"].iloc[df["intensity"].idxmax()], 2)
+    perc_pos = round((pos_count / len(df)) * 100, 1)
+    perc_neg = round((neg_count / len(df)) * 100, 1)
+    perc_neu = round((len(df) - pos_count - neg_count) / len(df) * 100, 1)
 
     # ----------------------------
     # DISPLAY KPIs
     # ----------------------------
-    kpi1, kpi2 = st.columns(2)
-    kpi1.metric("⚡ Sentiment Volatility", volatility)
-    kpi2.metric("📊 Positive/Negative Ratio", pos_neg_ratio)
+    st.subheader("⚡ Video Sentiment KPIs")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Volatility", volatility)
+    k2.metric("Pos/Neg Ratio", pos_neg_ratio)
+    k3.metric("Avg Polarity", avg_polarity)
+    k4.metric("Peak Intensity Time (min)", peak_intensity_time)
+    k5, k6, k7 = st.columns(3)
+    k5.metric("% Positive", perc_pos)
+    k6.metric("% Neutral", perc_neu)
+    k7.metric("% Negative", perc_neg)
 
     # ----------------------------
-    # PREVIEW TABLE
+    # TABLE PREVIEW
     # ----------------------------
-    st.subheader("📝 Caption Preview (Merged for Context)")
+    st.subheader("📝 Caption Preview (Merged)")
     st.dataframe(df[["time_min", "polarity", "sentiment", "text"]], use_container_width=True)
 
     # ----------------------------
     # SIDE-BY-SIDE CHARTS
     # ----------------------------
-    st.subheader("📈 Sentiment Analysis Overview")
+    st.subheader("📈 Sentiment Overview")
     col1, col2 = st.columns(2)
-
-    # Sentiment timeline
     with col1:
         fig1, ax1 = plt.subplots(figsize=(6, 4))
         ax1.scatter(df["time_min"], df["polarity"], c=df["color"], alpha=0.6)
@@ -148,27 +196,24 @@ if st.button("Analyze Captions"):
         ax1.axhline(0, linestyle="--", color="black", alpha=0.5)
         ax1.set_title("Sentiment Over Video Timeline")
         ax1.set_xlabel("Time (minutes)")
-        ax1.set_ylabel("Polarity (-1 to 1)")
+        ax1.set_ylabel("Polarity")
         ax1.legend()
         st.pyplot(fig1)
 
-    # Sentiment distribution
     with col2:
         fig2, ax2 = plt.subplots(figsize=(6, 4))
         df["sentiment"].value_counts().reindex(["Positive", "Neutral", "Negative"]).plot(
             kind="bar", ax=ax2, color=["green", "gray", "red"]
         )
-        ax2.set_ylabel("Count")
         ax2.set_title("Sentiment Distribution")
+        ax2.set_ylabel("Count")
         st.pyplot(fig2)
 
     # ----------------------------
-    # SENTIMENT INTENSITY & HEATMAP
+    # INTENSITY & HEATMAP
     # ----------------------------
     st.subheader("🔥 Sentiment Intensity & Heatmap")
     colA, colB = st.columns(2)
-
-    # Sentiment intensity over time
     with colA:
         fig3, ax3 = plt.subplots(figsize=(6, 4))
         ax3.plot(df["time_min"], df["intensity"], color="purple", linewidth=2)
@@ -176,11 +221,8 @@ if st.button("Analyze Captions"):
         ax3.set_xlabel("Time (minutes)")
         ax3.set_ylabel("Intensity (|Polarity|)")
         st.pyplot(fig3)
-
-    # Heatmap of sentiment
     with colB:
         fig4, ax4 = plt.subplots(figsize=(6, 4))
-        # create 2D array for heatmap: 1 row, time columns
         heatmap = df["polarity"].values[np.newaxis, :]
         c = ax4.imshow(heatmap, aspect="auto", cmap="RdYlGn", vmin=-1, vmax=1)
         ax4.set_title("Sentiment Heatmap")
@@ -194,17 +236,15 @@ if st.button("Analyze Captions"):
     # ----------------------------
     st.subheader("🏆 Strongest Emotional Moments")
     colC, colD = st.columns(2)
-
     with colC:
         st.write("### 🌟 Most Positive Moments")
         st.table(df.sort_values("polarity", ascending=False).head(8)[["time_min", "polarity", "text"]].reset_index(drop=True))
-
     with colD:
         st.write("### 💀 Most Negative Moments")
         st.table(df.sort_values("polarity").head(8)[["time_min", "polarity", "text"]].reset_index(drop=True))
 
     # ----------------------------
-    # DOWNLOAD
+    # DOWNLOAD CSV
     # ----------------------------
     st.subheader("⬇️ Download Results")
     st.download_button(
