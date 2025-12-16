@@ -109,6 +109,25 @@ if st.button("Analyze Captions"):
     df["color"] = df["polarity"].apply(sentiment_color)
 
     # ----------------------------
+    # KPI CALCULATIONS
+    # ----------------------------
+    # 1. Sentiment Volatility (mean absolute difference between consecutive polarities)
+    df["polarity_diff"] = df["polarity"].diff().abs()
+    volatility = round(df["polarity_diff"].mean(), 3)
+
+    # 2. Positive vs Negative Ratio
+    pos_count = (df["sentiment"] == "Positive").sum()
+    neg_count = (df["sentiment"] == "Negative").sum()
+    pos_neg_ratio = round(pos_count / max(neg_count, 1), 2)
+
+    # ----------------------------
+    # DISPLAY KPIs
+    # ----------------------------
+    kpi1, kpi2 = st.columns(2)
+    kpi1.metric("⚡ Sentiment Volatility", volatility)
+    kpi2.metric("📊 Positive/Negative Ratio", pos_neg_ratio)
+
+    # ----------------------------
     # PREVIEW TABLE
     # ----------------------------
     st.subheader("📝 Caption Preview (Merged for Context)")
