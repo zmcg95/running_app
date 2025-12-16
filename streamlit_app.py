@@ -17,10 +17,7 @@ st.set_page_config(
 
 st.title("🎬 YouTube Caption Sentiment Analyzer")
 st.write(
-    "Sentiment analysis using **ONLY YouTube captions**.\n\n"
-    "• Captions merged for better context (2× original size)\n"
-    "• Color-coded sentiment visuals\n"
-    "• No comments analyzed (captions only)"
+    "Sentiment Analysis.\n\n"
 )
 
 # ----------------------------
