@@ -85,6 +85,7 @@ if st.button("Analyze Captions"):
     # ----------------------------
     df["time_min"] = df["start"] / 60
     df["polarity"] = df["text"].apply(lambda x: TextBlob(x).sentiment.polarity)
+    df["intensity"] = df["polarity"].abs()  # sentiment intensity
 
     def label_sentiment(p):
         if p > 0.05:
@@ -111,7 +112,7 @@ if st.button("Analyze Captions"):
     # ----------------------------
     # KPI CALCULATIONS
     # ----------------------------
-    # 1. Sentiment Volatility (mean absolute difference between consecutive polarities)
+    # 1. Sentiment Volatility
     df["polarity_diff"] = df["polarity"].diff().abs()
     volatility = round(df["polarity_diff"].mean(), 3)
 
@@ -162,16 +163,43 @@ if st.button("Analyze Captions"):
         st.pyplot(fig2)
 
     # ----------------------------
-    # STRONGEST MOMENTS
+    # SENTIMENT INTENSITY & HEATMAP
     # ----------------------------
-    st.subheader("🔥 Strongest Emotional Moments")
+    st.subheader("🔥 Sentiment Intensity & Heatmap")
     colA, colB = st.columns(2)
 
+    # Sentiment intensity over time
     with colA:
+        fig3, ax3 = plt.subplots(figsize=(6, 4))
+        ax3.plot(df["time_min"], df["intensity"], color="purple", linewidth=2)
+        ax3.set_title("Sentiment Intensity Over Time")
+        ax3.set_xlabel("Time (minutes)")
+        ax3.set_ylabel("Intensity (|Polarity|)")
+        st.pyplot(fig3)
+
+    # Heatmap of sentiment
+    with colB:
+        fig4, ax4 = plt.subplots(figsize=(6, 4))
+        # create 2D array for heatmap: 1 row, time columns
+        heatmap = df["polarity"].values[np.newaxis, :]
+        c = ax4.imshow(heatmap, aspect="auto", cmap="RdYlGn", vmin=-1, vmax=1)
+        ax4.set_title("Sentiment Heatmap")
+        ax4.set_xlabel("Time Index")
+        ax4.set_yticks([])
+        fig4.colorbar(c, ax=ax4, orientation='vertical', label="Polarity")
+        st.pyplot(fig4)
+
+    # ----------------------------
+    # STRONGEST MOMENTS
+    # ----------------------------
+    st.subheader("🏆 Strongest Emotional Moments")
+    colC, colD = st.columns(2)
+
+    with colC:
         st.write("### 🌟 Most Positive Moments")
         st.table(df.sort_values("polarity", ascending=False).head(8)[["time_min", "polarity", "text"]].reset_index(drop=True))
 
-    with colB:
+    with colD:
         st.write("### 💀 Most Negative Moments")
         st.table(df.sort_values("polarity").head(8)[["time_min", "polarity", "text"]].reset_index(drop=True))
 
