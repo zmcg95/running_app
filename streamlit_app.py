@@ -15,7 +15,12 @@ st.set_page_config(
 )
 
 st.title("🎬 YouTube Caption Sentiment Analyzer")
-st.write("Sentiment analysis using **ONLY YouTube captions** (no comments).")
+st.write(
+    "Sentiment analysis using **ONLY YouTube captions**.\n\n"
+    "• Color-coded sentiment\n"
+    "• Context-aware caption grouping\n"
+    "• No comments, no API keys"
+)
 
 # ----------------------------
 # HELPERS (YOUR WORKING LOGIC)
@@ -32,28 +37,66 @@ def get_video_id(url):
 
     raise ValueError("Invalid YouTube URL")
 
-def get_captions(url):
+def get_raw_captions(url):
     video_id = get_video_id(url)
     api = YouTubeTranscriptApi()
-
-    # This returns a FetchedTranscript object
     transcript = api.fetch(video_id)
 
-    # Convert to list of dicts (time-aware)
-    data = []
+    rows = []
     for entry in transcript:
-        data.append({
+        rows.append({
             "start": entry.start,
             "duration": entry.duration,
             "text": entry.text
         })
 
-    return pd.DataFrame(data)
+    return pd.DataFrame(rows)
+
+# ----------------------------
+# CONTEXT MERGING
+# ----------------------------
+def merge_captions(df, window_seconds=10):
+    merged = []
+    buffer_text = []
+    buffer_start = None
+    elapsed = 0
+
+    for _, row in df.iterrows():
+        if buffer_start is None:
+            buffer_start = row["start"]
+
+        buffer_text.append(row["text"])
+        elapsed += row["duration"]
+
+        if elapsed >= window_seconds:
+            merged.append({
+                "start": buffer_start,
+                "text": " ".join(buffer_text)
+            })
+            buffer_text = []
+            buffer_start = None
+            elapsed = 0
+
+    if buffer_text:
+        merged.append({
+            "start": buffer_start,
+            "text": " ".join(buffer_text)
+        })
+
+    return pd.DataFrame(merged)
 
 # ----------------------------
 # INPUT
 # ----------------------------
 video_url = st.text_input("🔗 Enter YouTube Video URL")
+
+context_window = st.slider(
+    "🧠 Context window (seconds per sentiment block)",
+    min_value=5,
+    max_value=20,
+    value=10,
+    step=1
+)
 
 if st.button("Analyze Captions"):
 
@@ -62,10 +105,11 @@ if st.button("Analyze Captions"):
         st.stop()
 
     # ----------------------------
-    # FETCH CAPTIONS
+    # FETCH + MERGE CAPTIONS
     # ----------------------------
     try:
-        df = get_captions(video_url)
+        raw_df = get_raw_captions(video_url)
+        df = merge_captions(raw_df, window_seconds=context_window)
     except Exception as e:
         st.error(f"Could not fetch captions: {e}")
         st.stop()
@@ -75,11 +119,9 @@ if st.button("Analyze Captions"):
         st.stop()
 
     # ----------------------------
-    # PROCESS DATA
+    # SENTIMENT ANALYSIS
     # ----------------------------
     df["time_min"] = df["start"] / 60
-
-    # Sentiment
     df["polarity"] = df["text"].apply(
         lambda x: TextBlob(x).sentiment.polarity
     )
@@ -94,57 +136,88 @@ if st.button("Analyze Captions"):
 
     df["sentiment"] = df["polarity"].apply(label_sentiment)
 
-    # Rolling sentiment (smooth timeline)
+    # Smoothed polarity
     df["rolling_polarity"] = (
         df["polarity"]
-        .rolling(window=10, min_periods=1)
+        .rolling(window=5, min_periods=1)
         .mean()
     )
 
     # ----------------------------
-    # PREVIEW
+    # COLOR MAP
     # ----------------------------
-    st.subheader("📝 Caption Preview")
-    st.dataframe(df.head(30), use_container_width=True)
+    def sentiment_color(p):
+        if p > 0.05:
+            return "green"
+        elif p < -0.05:
+            return "red"
+        else:
+            return "gray"
+
+    df["color"] = df["polarity"].apply(sentiment_color)
 
     # ----------------------------
-    # VISUALS
+    # PREVIEW TABLE (COLOR)
+    # ----------------------------
+    st.subheader("📝 Caption Blocks (Context-Aware)")
+
+    def color_rows(row):
+        return [f"color: {row.color}"] * len(row)
+
+    st.dataframe(
+        df[["time_min", "polarity", "sentiment", "text"]]
+        .style.apply(color_rows, axis=1),
+        use_container_width=True
+    )
+
+    # ----------------------------
+    # SENTIMENT TIMELINE (COLORED)
     # ----------------------------
     st.subheader("📈 Sentiment Over Video Timeline")
 
-    col1, col2 = st.columns(2)
+    fig1, ax1 = plt.subplots(figsize=(12, 4))
 
-    # Polarity over time
-    with col1:
-        fig1, ax1 = plt.subplots(figsize=(8, 4))
-        ax1.plot(df["time_min"], df["polarity"], alpha=0.4)
-        ax1.plot(df["time_min"], df["rolling_polarity"], linewidth=2)
-        ax1.axhline(0, linestyle="--")
+    ax1.scatter(
+        df["time_min"],
+        df["polarity"],
+        c=df["color"],
+        alpha=0.6
+    )
 
-        ax1.set_title("Caption Sentiment Timeline")
-        ax1.set_xlabel("Time (minutes)")
-        ax1.set_ylabel("Polarity (-1 to 1)")
-        st.pyplot(fig1)
+    ax1.plot(
+        df["time_min"],
+        df["rolling_polarity"],
+        linewidth=2,
+        color="black",
+        label="Smoothed Sentiment"
+    )
 
-    # Sentiment counts
-    with col2:
-        fig2, ax2 = plt.subplots(figsize=(6, 4))
-        df["sentiment"].value_counts().plot(kind="bar", ax=ax2)
-        ax2.set_title("Caption Sentiment Distribution")
-        ax2.set_ylabel("Count")
-        st.pyplot(fig2)
+    ax1.axhline(0, linestyle="--", color="black", alpha=0.5)
+
+    ax1.set_title("Caption Sentiment Timeline (Green=Positive, Red=Negative)")
+    ax1.set_xlabel("Time (minutes)")
+    ax1.set_ylabel("Polarity (-1 to 1)")
+    ax1.legend()
+
+    st.pyplot(fig1)
 
     # ----------------------------
-    # POLARITY HISTOGRAM
+    # DISTRIBUTION
     # ----------------------------
-    st.subheader("📊 Polarity Distribution")
+    st.subheader("📊 Sentiment Distribution")
 
-    fig3, ax3 = plt.subplots(figsize=(10, 4))
-    ax3.hist(df["polarity"], bins=30)
-    ax3.set_title("Histogram of Caption Polarity")
-    ax3.set_xlabel("Polarity")
-    ax3.set_ylabel("Frequency")
-    st.pyplot(fig3)
+    fig2, ax2 = plt.subplots(figsize=(6, 4))
+    df["sentiment"].value_counts().reindex(
+        ["Positive", "Neutral", "Negative"]
+    ).plot(
+        kind="bar",
+        ax=ax2,
+        color=["green", "gray", "red"]
+    )
+
+    ax2.set_ylabel("Count")
+    ax2.set_title("Caption Sentiment Breakdown")
+    st.pyplot(fig2)
 
     # ----------------------------
     # STRONGEST MOMENTS
@@ -154,18 +227,18 @@ if st.button("Analyze Captions"):
     colA, colB = st.columns(2)
 
     with colA:
-        st.write("### 🌟 Most Positive Captions")
+        st.write("### 🌟 Most Positive Moments")
         st.table(
             df.sort_values("polarity", ascending=False)
-              .head(10)[["time_min", "polarity", "text"]]
+              .head(8)[["time_min", "polarity", "text"]]
               .reset_index(drop=True)
         )
 
     with colB:
-        st.write("### 💀 Most Negative Captions")
+        st.write("### 💀 Most Negative Moments")
         st.table(
             df.sort_values("polarity")
-              .head(10)[["time_min", "polarity", "text"]]
+              .head(8)[["time_min", "polarity", "text"]]
               .reset_index(drop=True)
         )
 
@@ -175,8 +248,8 @@ if st.button("Analyze Captions"):
     st.subheader("⬇️ Download Results")
 
     st.download_button(
-        label="Download Caption Sentiment CSV",
+        "Download Caption Sentiment CSV",
         data=df.to_csv(index=False).encode(),
-        file_name="caption_sentiment_timeline.csv",
+        file_name="caption_sentiment_contextual.csv",
         mime="text/csv"
     )
