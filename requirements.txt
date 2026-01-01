@@ -5,5 +5,9 @@ matplotlib
 textblob
 youtube-transcript-api
 numpy
+osmnx
+networkx
+gpxpy
+
 
 
