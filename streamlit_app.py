@@ -89,8 +89,8 @@ def route_to_gpx(G, route):
 # -----------------------------
 # Streamlit App
 # -----------------------------
-st.title("🏃 Trail Runner Route Generator")
-st.write("Click on the map to select your route start/end and generate trail routes.")
+st.title("🏃 Trail Runner Route GPX Generator")
+st.write("Click on the map to select your route start/end and generate trail routes. Download the GPX file of your favourite route.")
 
 # -----------------------------
 # Controls
