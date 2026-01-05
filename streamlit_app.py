@@ -15,12 +15,24 @@ from streamlit_folium import st_folium
 if "clicks" not in st.session_state:
     st.session_state.clicks = []
 
+if "graph" not in st.session_state:
+    st.session_state.graph = None
+
+if "graph_center" not in st.session_state:
+    st.session_state.graph_center = None
+
+# -----------------------------
+# Constants
+# -----------------------------
+GRAPH_RADIUS_METERS = 22_000  # 22 km radius
+
 # -----------------------------
 # 1️⃣ Helper: nearest node manually
 # -----------------------------
 def nearest_node_manual(G, lat, lon):
     min_dist = float("inf")
     nearest = None
+
     for node, data in G.nodes(data=True):
         node_lat = data["y"]
         node_lon = data["x"]
@@ -31,7 +43,12 @@ def nearest_node_manual(G, lat, lon):
         dphi = math.radians(node_lat - lat)
         dlambda = math.radians(node_lon - lon)
 
-        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        a = (
+            math.sin(dphi / 2) ** 2
+            + math.cos(phi1)
+            * math.cos(phi2)
+            * math.sin(dlambda / 2) ** 2
+        )
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         d = R * c
 
@@ -47,7 +64,7 @@ def nearest_node_manual(G, lat, lon):
 def generate_alternative_routes(G, start, end, target_distance, tolerance, k=3):
     routes = []
     attempts = 0
-    max_attempts = 1000
+    max_attempts = 1200
     nodes_list = list(G.nodes)
 
     while len(routes) < k and attempts < max_attempts:
@@ -59,11 +76,14 @@ def generate_alternative_routes(G, start, end, target_distance, tolerance, k=3):
             path2 = nx.shortest_path(G, mid_node, end, weight="length")
             route = path1 + path2[1:]
 
-            length = sum(G[u][v][0]["length"] for u, v in zip(route[:-1], route[1:]))
+            length = sum(
+                G[u][v][0]["length"] for u, v in zip(route[:-1], route[1:])
+            )
 
             if abs(length - target_distance) <= tolerance:
                 if route not in routes:
                     routes.append(route)
+
         except (nx.NetworkXNoPath, KeyError):
             continue
 
@@ -82,80 +102,132 @@ def route_to_gpx(G, route):
 
     for node in route:
         data = G.nodes[node]
-        segment.points.append(gpxpy.gpx.GPXTrackPoint(data["y"], data["x"]))
+        segment.points.append(
+            gpxpy.gpx.GPXTrackPoint(data["y"], data["x"])
+        )
 
     return gpx.to_xml()
+
+# -----------------------------
+# 4️⃣ Helper: load graph from click
+# -----------------------------
+@st.cache_resource(show_spinner=False)
+def load_graph_from_point(lat, lon):
+    G = ox.graph_from_point(
+        (lat, lon),
+        dist=GRAPH_RADIUS_METERS,
+        network_type="walk",
+        simplify=True,
+    )
+
+    G = ox.utils_graph.get_undirected(G)
+
+    # Keep only largest connected component
+    largest_cc = max(nx.connected_components(G), key=len)
+    G = G.subgraph(largest_cc).copy()
+
+    # Filter to trail-like paths
+    trail_nodes = set()
+    for u, v, k, d in G.edges(keys=True, data=True):
+        if d.get("highway") in ["footway", "path", "track"]:
+            trail_nodes.update([u, v])
+
+    return G.subgraph(trail_nodes).copy()
 
 # -----------------------------
 # Streamlit App
 # -----------------------------
 st.title("🏃 Trail Runner Route Generator")
-st.write("Click on the map to select your route start/end and generate trail routes.")
+st.write(
+    "Click on the map to select your start/end points. "
+    "The trail network loads automatically from your first click."
+)
 
 # -----------------------------
 # Controls
 # -----------------------------
-place = st.text_input("Place / City", "Castricum, Netherlands")
-
 route_mode = st.radio(
     "Route Type",
-    ["Loop (1 click)", "Point-to-point (2 clicks)"]
+    ["Loop (1 click)", "Point-to-point (2 clicks)"],
+    horizontal=True,
 )
 
-target_distance = st.number_input("Target Distance (meters)", value=3000, step=500)
-tolerance = st.number_input("Distance Tolerance (meters)", value=300, step=100)
+target_distance = st.number_input(
+    "Target Distance (meters)", value=3000, step=500
+)
+tolerance = st.number_input(
+    "Distance Tolerance (meters)", value=300, step=100
+)
 
-if st.button("Reset map clicks"):
+if st.button("🔄 Reset map clicks"):
     st.session_state.clicks = []
+    st.session_state.graph = None
+    st.session_state.graph_center = None
+    st.rerun()
+
+# -----------------------------
+# Click counter UX
+# -----------------------------
+needed_clicks = 1 if route_mode.startswith("Loop") else 2
+st.info(
+    f"📍 Clicks selected: {len(st.session_state.clicks)} / {needed_clicks}"
+)
 
 # -----------------------------
 # Map
 # -----------------------------
+map_center = (
+    st.session_state.clicks[0]
+    if st.session_state.clicks
+    else [52.547314, 4.646000]
+)
+
 m = folium.Map(
-    location=[52.547314, 4.646000],
+    location=map_center,
     zoom_start=13,
-    tiles="OpenStreetMap"
+    tiles="OpenStreetMap",
 )
 
 for i, (lat, lon) in enumerate(st.session_state.clicks):
     label = "Start" if i == 0 else "End"
     color = "green" if i == 0 else "red"
-    folium.Marker([lat, lon], popup=label, icon=folium.Icon(color=color)).add_to(m)
+    folium.Marker(
+        [lat, lon],
+        popup=label,
+        icon=folium.Icon(color=color),
+    ).add_to(m)
 
-map_data = st_folium(m, height=500, width=700)
+map_data = st_folium(m, height=520, width=720)
 
+# -----------------------------
+# Handle clicks (UX improved)
+# -----------------------------
 if map_data and map_data.get("last_clicked"):
     lat = map_data["last_clicked"]["lat"]
     lon = map_data["last_clicked"]["lng"]
 
-    max_clicks = 1 if route_mode.startswith("Loop") else 2
-    if len(st.session_state.clicks) < max_clicks:
+    if len(st.session_state.clicks) < needed_clicks:
         st.session_state.clicks.append((lat, lon))
+
+        # Load graph on FIRST click only
+        if len(st.session_state.clicks) == 1:
+            st.session_state.graph = load_graph_from_point(lat, lon)
+            st.session_state.graph_center = (lat, lon)
+
+        st.rerun()
 
 # -----------------------------
 # Generate routes
 # -----------------------------
-if st.button("Generate Routes"):
-    needed_clicks = 1 if route_mode.startswith("Loop") else 2
-
+if st.button("🚀 Generate Routes"):
     if len(st.session_state.clicks) < needed_clicks:
-        st.warning("Please click on the map to select start/end points.")
+        st.warning("Please select the required number of points on the map.")
     else:
-        with st.spinner("Loading trail network and generating routes..."):
-            G = ox.graph_from_place(place, network_type="walk")
-            G = G.to_undirected()
-
-            largest_cc = max(nx.connected_components(G), key=len)
-            G = G.subgraph(largest_cc).copy()
-
-            trail_nodes = set()
-            for u, v, k, d in G.edges(keys=True, data=True):
-                if d.get("highway") in ["footway", "path", "track"]:
-                    trail_nodes.update([u, v])
-
-            G = G.subgraph(trail_nodes).copy()
+        with st.spinner("Generating trail routes..."):
+            G = st.session_state.graph
 
             start_lat, start_lon = st.session_state.clicks[0]
+
             if route_mode.startswith("Loop"):
                 end_lat, end_lon = start_lat, start_lon
             else:
@@ -165,23 +237,35 @@ if st.button("Generate Routes"):
             end_node = nearest_node_manual(G, end_lat, end_lon)
 
             routes = generate_alternative_routes(
-                G, start_node, end_node, target_distance, tolerance, k=3
+                G,
+                start_node,
+                end_node,
+                target_distance,
+                tolerance,
+                k=3,
             )
 
         if not routes:
-            st.warning("No routes found. Try increasing tolerance or distance.")
+            st.warning("No routes found. Try increasing distance or tolerance.")
         else:
             st.success(f"{len(routes)} routes generated!")
-            for i, r in enumerate(routes):
-                length = sum(G[u][v][0]["length"] for u, v in zip(r[:-1], r[1:]))
-                st.write(f"**Route {i+1}** — {length/1000:.2f} km")
 
-                fig, ax = ox.plot_graph_route(G, r, show=False, close=False)
+            for i, r in enumerate(routes):
+                length = sum(
+                    G[u][v][0]["length"]
+                    for u, v in zip(r[:-1], r[1:])
+                )
+
+                st.write(f"### Route {i+1} — {length/1000:.2f} km")
+
+                fig, ax = ox.plot_graph_route(
+                    G, r, show=False, close=False
+                )
                 st.pyplot(fig)
 
                 gpx_data = route_to_gpx(G, r)
                 st.download_button(
-                    f"Download Route {i+1} (GPX)",
+                    f"⬇️ Download Route {i+1} (GPX)",
                     gpx_data,
                     file_name=f"route_{i+1}.gpx",
                     mime="application/gpx+xml",
