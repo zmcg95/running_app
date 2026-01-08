@@ -15,32 +15,65 @@ if "clicks" not in st.session_state:
     st.session_state.clicks = []
 
 # -----------------------------
-# Helper: generate routes
+# Helper: manual nearest node (Cloud-safe)
+# -----------------------------
+def nearest_node_manual(G, lat, lon):
+    min_dist = float("inf")
+    nearest = None
+
+    for node, data in G.nodes(data=True):
+        node_lat = data["y"]
+        node_lon = data["x"]
+
+        R = 6371000
+        phi1 = math.radians(lat)
+        phi2 = math.radians(node_lat)
+        dphi = math.radians(node_lat - lat)
+        dlambda = math.radians(node_lon - lon)
+
+        a = (
+            math.sin(dphi / 2) ** 2
+            + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        )
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        d = R * c
+
+        if d < min_dist:
+            min_dist = d
+            nearest = node
+
+    return nearest
+
+# -----------------------------
+# Helper: fast route generation
 # -----------------------------
 def generate_alternative_routes(G, start, end, target_distance, tolerance, k=3):
     routes = []
-    attempts = 0
-    max_attempts = 1000
-    nodes_list = list(G.nodes)
 
-    while len(routes) < k and attempts < max_attempts:
-        attempts += 1
-        mid_node = random.choice(nodes_list)
+    # Single Dijkstra from start
+    lengths, paths = nx.single_source_dijkstra(G, start, weight="length")
+
+    for mid_node, dist1 in lengths.items():
+        if abs(dist1 - target_distance / 2) > tolerance:
+            continue
 
         try:
-            path1 = nx.shortest_path(G, start, mid_node, weight="length")
             path2 = nx.shortest_path(G, mid_node, end, weight="length")
-            route = path1 + path2[1:]
-
-            length = sum(
-                G[u][v][0]["length"] for u, v in zip(route[:-1], route[1:])
+            dist2 = sum(
+                G[u][v][0]["length"]
+                for u, v in zip(path2[:-1], path2[1:])
             )
 
-            if abs(length - target_distance) <= tolerance:
-                if route not in routes:
-                    routes.append(route)
+            total_dist = dist1 + dist2
 
-        except (nx.NetworkXNoPath, KeyError):
+            if abs(total_dist - target_distance) <= tolerance:
+                route = paths[mid_node] + path2[1:]
+                routes.append(route)
+
+                if len(routes) >= k:
+                    break
+
+        except nx.NetworkXNoPath:
             continue
 
     return routes
@@ -65,13 +98,10 @@ def route_to_gpx(G, route):
     return gpx.to_xml()
 
 # -----------------------------
-# Streamlit UI
+# UI
 # -----------------------------
 st.title("🏃 Trail Runner Route GPX Generator")
-st.write(
-    "Click on the map to select your start/end point. "
-    "The trail network is loaded automatically around your first click."
-)
+st.write("Click on the map to select your start/end point. Trails load automatically.")
 
 route_mode = st.radio(
     "Route Type",
@@ -124,72 +154,70 @@ if st.button("Generate Routes"):
 
     if len(st.session_state.clicks) < needed_clicks:
         st.warning("Please click on the map to select start/end points.")
-    else:
-        with st.spinner("Loading trail network and generating routes..."):
-            center_lat, center_lon = st.session_state.clicks[0]
+        st.stop()
 
-            # Load 40km radius around first click
-            G = ox.graph_from_point(
-                (center_lat, center_lon),
-                dist=10000,
-                network_type="walk",
-                simplify=True
-            )
+    with st.spinner("Loading trail network and generating routes..."):
+        center_lat, center_lon = st.session_state.clicks[0]
 
-            G = G.to_undirected()
+        # Load only trails, 10km radius (FAST)
+        G = ox.graph_from_point(
+            (center_lat, center_lon),
+            dist=10000,
+            network_type="walk",
+            simplify=True,
+            custom_filter='["highway"~"path|footway|track"]'
+        )
 
-            # Largest connected component
-            largest_cc = max(nx.connected_components(G), key=len)
-            G = G.subgraph(largest_cc).copy()
+        G = G.to_undirected()
 
-            # Keep trail-like paths only
-            trail_nodes = set()
-            for u, v, k, d in G.edges(keys=True, data=True):
-                if d.get("highway") in ["footway", "path", "track"]:
-                    trail_nodes.update([u, v])
+        # Keep largest connected component
+        largest_cc = max(nx.connected_components(G), key=len)
+        G = G.subgraph(largest_cc).copy()
 
-            G = G.subgraph(trail_nodes).copy()
-
-            start_lat, start_lon = st.session_state.clicks[0]
-            if route_mode.startswith("Loop"):
-                end_lat, end_lon = start_lat, start_lon
-            else:
-                end_lat, end_lon = st.session_state.clicks[1]
-
-            start_node = nearest_node_manual(G, start_lat, start_lon)
-            end_node = nearest_node_manual(G, end_lat, end_lon)
-
-            routes = generate_alternative_routes(
-                G,
-                start_node,
-                end_node,
-                target_distance,
-                tolerance,
-                k=3
-            )
-
-        if not routes:
-            st.warning("No routes found. Try increasing tolerance or distance.")
+        start_lat, start_lon = st.session_state.clicks[0]
+        if route_mode.startswith("Loop"):
+            end_lat, end_lon = start_lat, start_lon
         else:
-            st.success(f"{len(routes)} routes generated!")
+            end_lat, end_lon = st.session_state.clicks[1]
 
-            for i, r in enumerate(routes):
-                length = sum(
-                    G[u][v][0]["length"]
-                    for u, v in zip(r[:-1], r[1:])
-                )
+        start_node = nearest_node_manual(G, start_lat, start_lon)
+        end_node = nearest_node_manual(G, end_lat, end_lon)
 
-                st.write(f"**Route {i+1}** — {length/1000:.2f} km")
+        if start_node is None or end_node is None:
+            st.warning("No nearby trails found. Try clicking closer to a path.")
+            st.stop()
 
-                fig, ax = ox.plot_graph_route(
-                    G, r, show=False, close=False
-                )
-                st.pyplot(fig)
+        routes = generate_alternative_routes(
+            G,
+            start_node,
+            end_node,
+            target_distance,
+            tolerance,
+            k=3
+        )
 
-                gpx_data = route_to_gpx(G, r)
-                st.download_button(
-                    f"Download Route {i+1} (GPX)",
-                    gpx_data,
-                    file_name=f"route_{i+1}.gpx",
-                    mime="application/gpx+xml",
-                )
+    if not routes:
+        st.warning("No routes found. Try increasing distance or tolerance.")
+    else:
+        st.success(f"{len(routes)} routes generated!")
+
+        for i, r in enumerate(routes):
+            length = sum(
+                G[u][v][0]["length"]
+                for u, v in zip(r[:-1], r[1:])
+            )
+
+            st.write(f"**Route {i+1}** — {length/1000:.2f} km")
+
+            fig, ax = ox.plot_graph_route(
+                G, r, show=False, close=False
+            )
+            st.pyplot(fig)
+
+            gpx_data = route_to_gpx(G, r)
+            st.download_button(
+                f"Download Route {i+1} (GPX)",
+                gpx_data,
+                file_name=f"route_{i+1}.gpx",
+                mime="application/gpx+xml",
+            )
