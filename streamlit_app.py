@@ -131,7 +131,7 @@ if st.button("Generate Routes"):
             # Load 40km radius around first click
             G = ox.graph_from_point(
                 (center_lat, center_lon),
-                dist=40000,
+                dist=10000,
                 network_type="walk",
                 simplify=True
             )
