@@ -43,9 +43,7 @@ def nearest_node_manual(G, lat, lon):
     min_dist = float("inf")
     nearest = None
     for node, data in G.nodes(data=True):
-        d = ox.distance.great_circle_vec(
-            lat, lon, data["y"], data["x"]
-        )
+        d = ox.distance.great_circle_vec(lat, lon, data["y"], data["x"])
         if d < min_dist:
             min_dist = d
             nearest = node
@@ -106,7 +104,7 @@ def format_time(minutes):
     return f"{m}:{s:02d}"
 
 # -----------------------------
-# NEW: Surface breakdown
+# Surface breakdown
 # -----------------------------
 def surface_breakdown(G, route):
     totals = defaultdict(float)
@@ -136,7 +134,7 @@ def surface_breakdown(G, route):
     return {k: int((v / total_len) * 100) for k, v in totals.items()}
 
 # -----------------------------
-# NEW: Flow / twistiness
+# Flow / twistiness
 # -----------------------------
 def route_flow(G, route, distance_km):
     turns = 0
@@ -165,7 +163,7 @@ def route_flow(G, route, distance_km):
         return "Twisty 🔴"
 
 # -----------------------------
-# UI Header
+# Header
 # -----------------------------
 st.markdown(
     """
@@ -178,11 +176,25 @@ st.markdown(
 )
 
 # -----------------------------
-# Controls
+# Controls (FIXED)
 # -----------------------------
 route_mode = st.radio("Route Type", ["Loop (1 click)", "Point-to-point (2 clicks)"])
-target_distance = st.number_input("Target Distance (meters)", 3000, 500)
-tolerance = st.number_input("Distance Tolerance (meters)", 300, 100)
+
+target_distance = st.number_input(
+    "Target Distance (meters)",
+    min_value=500,
+    max_value=50000,
+    value=3000,
+    step=500,
+)
+
+tolerance = st.number_input(
+    "Distance Tolerance (meters)",
+    min_value=50,
+    max_value=5000,
+    value=300,
+    step=50,
+)
 
 if st.button("Reset map clicks"):
     st.session_state.clicks = []
