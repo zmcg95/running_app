@@ -9,6 +9,12 @@ from streamlit_folium import st_folium
 import matplotlib.pyplot as plt
 
 # -----------------------------
+# Simple estimation rules (easy to tweak)
+# -----------------------------
+MINUTES_PER_KM = 5
+CALORIES_PER_KM = 60
+
+# -----------------------------
 # Page polish (padding)
 # -----------------------------
 st.markdown(
@@ -109,7 +115,7 @@ def route_to_gpx(G, route):
     return gpx.to_xml()
 
 # -----------------------------
-# Helper: tight route plot (ZOOM FIX)
+# Helper: tight route plot
 # -----------------------------
 def plot_zoomed_route(G, route, padding=0.001):
     xs = [G.nodes[n]["x"] for n in route]
@@ -126,9 +132,17 @@ def plot_zoomed_route(G, route, padding=0.001):
 
     ax.set_xlim(min(xs) - padding, max(xs) + padding)
     ax.set_ylim(min(ys) - padding, max(ys) + padding)
-
     ax.axis("off")
+
     return fig
+
+# -----------------------------
+# Helper: formatting
+# -----------------------------
+def format_time(minutes):
+    m = int(minutes)
+    s = int((minutes - m) * 60)
+    return f"{m}:{s:02d}"
 
 # -----------------------------
 # Hero header
@@ -239,22 +253,27 @@ if st.button("Generate Routes"):
         cols = st.columns(len(routes))
         for i, (col, r) in enumerate(zip(cols, routes)):
             with col:
-                length = sum(
+                length_m = sum(
                     G[u][v][0]["length"]
                     for u, v in zip(r[:-1], r[1:])
                 )
+
+                distance_km = length_m / 1000
+                est_time_min = distance_km * MINUTES_PER_KM
+                est_cal = distance_km * CALORIES_PER_KM
 
                 st.markdown(
                     f"""
                     <div style="
                         border:1px solid #ddd;
                         border-radius:12px;
-                        padding:10px;
-                        text-align:center;
+                        padding:12px;
                         background-color:#fafafa;
                     ">
-                        <h4>Route {i+1}</h4>
-                        <p>{length/1000:.2f} km</p>
+                        <h4 style="margin-bottom:8px;">Route {i+1}</h4>
+                        <p><strong>Distance:</strong> {distance_km:.2f} km</p>
+                        <p><strong>Est. Time:</strong> ⏱️ {format_time(est_time_min)}</p>
+                        <p><strong>Est. Calories:</strong> 🔥 {int(est_cal)} kcal</p>
                     </div>
                     """,
                     unsafe_allow_html=True
