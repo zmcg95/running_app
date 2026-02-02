@@ -39,14 +39,30 @@ if "clicks" not in st.session_state:
 # -----------------------------
 # Helpers
 # -----------------------------
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 def nearest_node_manual(G, lat, lon):
     min_dist = float("inf")
     nearest = None
+
     for node, data in G.nodes(data=True):
-        d = ox.distance.great_circle_vec(lat, lon, data["y"], data["x"])
+        d = haversine(lat, lon, data["y"], data["x"])
         if d < min_dist:
             min_dist = d
             nearest = node
+
     return nearest
 
 
@@ -147,17 +163,17 @@ def route_flow(G, route, distance_km):
         y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
         return math.degrees(math.atan2(x, y))
 
-    bearings = [bearing(route[i], route[i+1]) for i in range(len(route)-1)]
+    bearings = [bearing(route[i], route[i + 1]) for i in range(len(route) - 1)]
 
-    for i in range(len(bearings)-1):
-        if abs(bearings[i+1] - bearings[i]) > 30:
+    for i in range(len(bearings) - 1):
+        if abs(bearings[i + 1] - bearings[i]) > 30:
             turns += 1
 
-    turns_per_km = turns / max(distance_km, 0.1)
+    tpk = turns / max(distance_km, 0.1)
 
-    if turns_per_km < 12:
+    if tpk < 12:
         return "Smooth 🟢"
-    elif turns_per_km < 20:
+    elif tpk < 20:
         return "Moderate 🟡"
     else:
         return "Twisty 🔴"
@@ -176,7 +192,7 @@ st.markdown(
 )
 
 # -----------------------------
-# Controls (FIXED)
+# Controls
 # -----------------------------
 route_mode = st.radio("Route Type", ["Loop (1 click)", "Point-to-point (2 clicks)"])
 
@@ -231,19 +247,25 @@ if st.button("Generate Routes"):
 
     with st.spinner("Generating routes..."):
         center = st.session_state.clicks[0]
+
         G = ox.graph_from_point(
             center,
             dist=10000,
             network_type="walk",
             custom_filter='["highway"~"path|footway|track"]'
         )
+
         G = G.to_undirected()
         G = G.subgraph(max(nx.connected_components(G), key=len)).copy()
 
         start = nearest_node_manual(G, *st.session_state.clicks[0])
-        end = start if route_mode.startswith("Loop") else nearest_node_manual(G, *st.session_state.clicks[1])
+        end = start if route_mode.startswith("Loop") else nearest_node_manual(
+            G, *st.session_state.clicks[1]
+        )
 
-        routes = generate_alternative_routes(G, start, end, target_distance, tolerance)
+        routes = generate_alternative_routes(
+            G, start, end, target_distance, tolerance
+        )
 
     if not routes:
         st.warning("No routes found.")
