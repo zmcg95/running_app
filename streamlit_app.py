@@ -6,6 +6,7 @@ import gpxpy
 import gpxpy.gpx
 import folium
 from streamlit_folium import st_folium
+import matplotlib.pyplot as plt
 
 # -----------------------------
 # Page polish (padding)
@@ -106,6 +107,28 @@ def route_to_gpx(G, route):
         )
 
     return gpx.to_xml()
+
+# -----------------------------
+# Helper: tight route plot (ZOOM FIX)
+# -----------------------------
+def plot_zoomed_route(G, route, padding=0.001):
+    xs = [G.nodes[n]["x"] for n in route]
+    ys = [G.nodes[n]["y"] for n in route]
+
+    fig, ax = ox.plot_graph_route(
+        G,
+        route,
+        show=False,
+        close=False,
+        figsize=(4, 4),
+        node_size=0
+    )
+
+    ax.set_xlim(min(xs) - padding, max(xs) + padding)
+    ax.set_ylim(min(ys) - padding, max(ys) + padding)
+
+    ax.axis("off")
+    return fig
 
 # -----------------------------
 # Hero header
@@ -237,9 +260,7 @@ if st.button("Generate Routes"):
                     unsafe_allow_html=True
                 )
 
-                fig, ax = ox.plot_graph_route(
-                    G, r, show=False, close=False, figsize=(4, 4)
-                )
+                fig = plot_zoomed_route(G, r)
                 st.pyplot(fig)
 
                 st.download_button(
