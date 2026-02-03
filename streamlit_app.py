@@ -6,7 +6,6 @@ import gpxpy
 import gpxpy.gpx
 import folium
 from streamlit_folium import st_folium
-import matplotlib.pyplot as plt
 from collections import defaultdict
 
 # -----------------------------
@@ -54,16 +53,15 @@ def haversine(lat1, lon1, lat2, lon2):
 
 
 def nearest_node_manual(G, lat, lon):
-    min_dist = float("inf")
-    nearest = None
+    best = None
+    best_dist = float("inf")
 
-    for node, data in G.nodes(data=True):
-        d = haversine(lat, lon, data["y"], data["x"])
-        if d < min_dist:
-            min_dist = d
-            nearest = node
-
-    return nearest
+    for n, d in G.nodes(data=True):
+        dist = haversine(lat, lon, d["y"], d["x"])
+        if dist < best_dist:
+            best_dist = dist
+            best = n
+    return best
 
 
 def generate_alternative_routes(G, start, end, target_distance, tolerance, k=3):
@@ -82,7 +80,7 @@ def generate_alternative_routes(G, start, end, target_distance, tolerance, k=3):
                 if len(routes) >= k:
                     break
         except nx.NetworkXNoPath:
-            continue
+            pass
     return routes
 
 
@@ -100,36 +98,23 @@ def route_to_gpx(G, route):
     return gpx.to_xml()
 
 
-def plot_zoomed_route(G, route, padding=0.001):
-    xs = [G.nodes[n]["x"] for n in route]
-    ys = [G.nodes[n]["y"] for n in route]
-
-    fig, ax = ox.plot_graph_route(
-        G, route, show=False, close=False, figsize=(4, 4), node_size=0
-    )
-
-    ax.set_xlim(min(xs) - padding, max(xs) + padding)
-    ax.set_ylim(min(ys) - padding, max(ys) + padding)
-    ax.axis("off")
-    return fig
-
-
 def format_time(minutes):
     m = int(minutes)
     s = int((minutes - m) * 60)
     return f"{m}:{s:02d}"
+
 
 # -----------------------------
 # Surface breakdown
 # -----------------------------
 def surface_breakdown(G, route):
     totals = defaultdict(float)
-    total_len = 0
+    total = 0
 
     for u, v in zip(route[:-1], route[1:]):
         edge = G[u][v][0]
         length = edge["length"]
-        total_len += length
+        total += length
 
         surface = edge.get("surface")
         highway = edge.get("highway")
@@ -147,14 +132,13 @@ def surface_breakdown(G, route):
 
         totals[key] += length
 
-    return {k: int((v / total_len) * 100) for k, v in totals.items()}
+    return {k: int((v / total) * 100) for k, v in totals.items()}
+
 
 # -----------------------------
 # Flow / twistiness
 # -----------------------------
 def route_flow(G, route, distance_km):
-    turns = 0
-
     def bearing(a, b):
         lat1, lon1 = math.radians(G.nodes[a]["y"]), math.radians(G.nodes[a]["x"])
         lat2, lon2 = math.radians(G.nodes[b]["y"]), math.radians(G.nodes[b]["x"])
@@ -164,10 +148,7 @@ def route_flow(G, route, distance_km):
         return math.degrees(math.atan2(x, y))
 
     bearings = [bearing(route[i], route[i + 1]) for i in range(len(route) - 1)]
-
-    for i in range(len(bearings) - 1):
-        if abs(bearings[i + 1] - bearings[i]) > 30:
-            turns += 1
+    turns = sum(1 for i in range(len(bearings) - 1) if abs(bearings[i+1] - bearings[i]) > 30)
 
     tpk = turns / max(distance_km, 0.1)
 
@@ -177,6 +158,29 @@ def route_flow(G, route, distance_km):
         return "Moderate 🟡"
     else:
         return "Twisty 🔴"
+
+
+# -----------------------------
+# Static Folium route preview
+# -----------------------------
+def folium_route_preview(G, route):
+    coords = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in route]
+
+    m = folium.Map(location=coords[0], zoom_start=14, tiles="OpenStreetMap")
+
+    folium.PolyLine(
+        coords,
+        color="#1f77b4",
+        weight=5,
+        opacity=0.9
+    ).add_to(m)
+
+    folium.Marker(coords[0], icon=folium.Icon(color="green"), tooltip="Start").add_to(m)
+    folium.Marker(coords[-1], icon=folium.Icon(color="red"), tooltip="End").add_to(m)
+
+    m.fit_bounds(coords)
+    return m
+
 
 # -----------------------------
 # Header
@@ -216,14 +220,13 @@ if st.button("Reset map clicks"):
     st.session_state.clicks = []
 
 # -----------------------------
-# Map
+# Main map
 # -----------------------------
 m = folium.Map(location=[52, 5], zoom_start=6)
 
 for i, (lat, lon) in enumerate(st.session_state.clicks):
     folium.Marker(
         [lat, lon],
-        popup="Start" if i == 0 else "End",
         icon=folium.Icon(color="green" if i == 0 else "red"),
     ).add_to(m)
 
@@ -295,7 +298,11 @@ if st.button("Generate Routes"):
                     unsafe_allow_html=True
                 )
 
-                st.pyplot(plot_zoomed_route(G, r))
+                st_folium(
+                    folium_route_preview(G, r),
+                    height=300,
+                    width=300,
+                )
 
                 st.download_button(
                     "⬇️ Download GPX",
