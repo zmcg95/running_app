@@ -35,6 +35,13 @@ st.markdown(
 if "clicks" not in st.session_state:
     st.session_state.clicks = []
 
+# 🔧 EDIT: persist graph + routes
+if "routes" not in st.session_state:
+    st.session_state.routes = None
+
+if "graph" not in st.session_state:
+    st.session_state.graph = None
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -55,7 +62,6 @@ def haversine(lat1, lon1, lat2, lon2):
 def nearest_node_manual(G, lat, lon):
     best = None
     best_dist = float("inf")
-
     for n, d in G.nodes(data=True):
         dist = haversine(lat, lon, d["y"], d["x"])
         if dist < best_dist:
@@ -104,9 +110,6 @@ def format_time(minutes):
     return f"{m}:{s:02d}"
 
 
-# -----------------------------
-# Surface breakdown
-# -----------------------------
 def surface_breakdown(G, route):
     totals = defaultdict(float)
     total = 0
@@ -135,9 +138,6 @@ def surface_breakdown(G, route):
     return {k: int((v / total) * 100) for k, v in totals.items()}
 
 
-# -----------------------------
-# Flow / twistiness
-# -----------------------------
 def route_flow(G, route, distance_km):
     def bearing(a, b):
         lat1, lon1 = math.radians(G.nodes[a]["y"]), math.radians(G.nodes[a]["x"])
@@ -160,27 +160,16 @@ def route_flow(G, route, distance_km):
         return "Twisty 🔴"
 
 
-# -----------------------------
-# Static Folium route preview
-# -----------------------------
 def folium_route_preview(G, route):
     coords = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in route]
-
     m = folium.Map(location=coords[0], zoom_start=14, tiles="OpenStreetMap")
 
-    folium.PolyLine(
-        coords,
-        color="#1f77b4",
-        weight=5,
-        opacity=0.9
-    ).add_to(m)
-
-    folium.Marker(coords[0], icon=folium.Icon(color="green"), tooltip="Start").add_to(m)
-    folium.Marker(coords[-1], icon=folium.Icon(color="red"), tooltip="End").add_to(m)
+    folium.PolyLine(coords, color="#1f77b4", weight=5).add_to(m)
+    folium.Marker(coords[0], icon=folium.Icon(color="green")).add_to(m)
+    folium.Marker(coords[-1], icon=folium.Icon(color="red")).add_to(m)
 
     m.fit_bounds(coords)
     return m
-
 
 # -----------------------------
 # Header
@@ -201,23 +190,16 @@ st.markdown(
 route_mode = st.radio("Route Type", ["Loop (1 click)", "Point-to-point (2 clicks)"])
 
 target_distance = st.number_input(
-    "Target Distance (meters)",
-    min_value=500,
-    max_value=50000,
-    value=3000,
-    step=500,
+    "Target Distance (meters)", 500, 50000, 3000, 500
 )
 
 tolerance = st.number_input(
-    "Distance Tolerance (meters)",
-    min_value=50,
-    max_value=5000,
-    value=300,
-    step=50,
+    "Distance Tolerance (meters)", 50, 5000, 300, 50
 )
 
 if st.button("Reset map clicks"):
     st.session_state.clicks = []
+    st.session_state.routes = None  # 🔧 EDIT
 
 # -----------------------------
 # Main map
@@ -240,7 +222,7 @@ if map_data and map_data.get("last_clicked"):
         st.session_state.clicks.append((lat, lon))
 
 # -----------------------------
-# Generate Routes
+# Generate Routes (EVENT)
 # -----------------------------
 if st.button("Generate Routes"):
     needed = 1 if route_mode.startswith("Loop") else 2
@@ -266,47 +248,47 @@ if st.button("Generate Routes"):
             G, *st.session_state.clicks[1]
         )
 
-        routes = generate_alternative_routes(
+        st.session_state.graph = G
+        st.session_state.routes = generate_alternative_routes(
             G, start, end, target_distance, tolerance
         )
 
-    if not routes:
-        st.warning("No routes found.")
-    else:
-        cols = st.columns(len(routes))
-        for i, (col, r) in enumerate(zip(cols, routes)):
-            with col:
-                length_m = sum(G[u][v][0]["length"] for u, v in zip(r[:-1], r[1:]))
-                km = length_m / 1000
+# -----------------------------
+# Display Routes (PERSISTENT)
+# -----------------------------
+if st.session_state.routes:
+    G = st.session_state.graph
+    cols = st.columns(len(st.session_state.routes))
 
-                surfaces = surface_breakdown(G, r)
-                flow = route_flow(G, r, km)
+    for i, (col, r) in enumerate(zip(cols, st.session_state.routes)):
+        with col:
+            length_m = sum(G[u][v][0]["length"] for u, v in zip(r[:-1], r[1:]))
+            km = length_m / 1000
 
-                st.markdown(
-                    f"""
-                    <div style="border:1px solid #ddd;border-radius:12px;padding:12px;">
-                        <h4>Route {i+1}</h4>
-                        <p><b>Distance:</b> {km:.2f} km</p>
-                        <p><b>Est. Time:</b> ⏱️ {format_time(km * MINUTES_PER_KM)}</p>
-                        <p><b>Calories:</b> 🔥 {int(km * CALORIES_PER_KM)} kcal</p>
-                        <p><b>Flow:</b> {flow}</p>
-                        <p><b>Surface:</b><br>
-                        {" · ".join([f"{k} {v}%" for k,v in surfaces.items()])}
-                        </p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+            surfaces = surface_breakdown(G, r)
+            flow = route_flow(G, r, km)
 
-                st_folium(
-                    folium_route_preview(G, r),
-                    height=300,
-                    width=300,
-                )
+            st.markdown(
+                f"""
+                <div style="border:1px solid #ddd;border-radius:12px;padding:12px;">
+                    <h4>Route {i+1}</h4>
+                    <p><b>Distance:</b> {km:.2f} km</p>
+                    <p><b>Est. Time:</b> ⏱️ {format_time(km * MINUTES_PER_KM)}</p>
+                    <p><b>Calories:</b> 🔥 {int(km * CALORIES_PER_KM)} kcal</p>
+                    <p><b>Flow:</b> {flow}</p>
+                    <p><b>Surface:</b><br>
+                    {" · ".join([f"{k} {v}%" for k,v in surfaces.items()])}
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
-                st.download_button(
-                    "⬇️ Download GPX",
-                    route_to_gpx(G, r),
-                    f"route_{i+1}.gpx",
-                    "application/gpx+xml",
-                )
+            st_folium(folium_route_preview(G, r), height=300, width=300)
+
+            st.download_button(
+                "⬇️ Download GPX",
+                route_to_gpx(G, r),
+                f"route_{i+1}.gpx",
+                "application/gpx+xml",
+            )
