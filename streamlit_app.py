@@ -15,7 +15,7 @@ MINUTES_PER_KM = 5
 CALORIES_PER_KM = 60
 
 # -----------------------------
-# Page polish + box styles
+# Page polish + styles
 # -----------------------------
 st.markdown(
     """
@@ -35,6 +35,10 @@ st.markdown(
             padding:25px;
             border-radius:15px;
             margin-bottom:20px;
+            text-align:center;
+        }
+        div[role="radiogroup"] {
+            justify-content: center;
         }
     </style>
     """,
@@ -110,9 +114,7 @@ def route_to_gpx(G, route):
     gpx.tracks.append(track)
     track.segments.append(seg)
     for n in route:
-        seg.points.append(
-            gpxpy.gpx.GPXTrackPoint(G.nodes[n]["y"], G.nodes[n]["x"])
-        )
+        seg.points.append(gpxpy.gpx.GPXTrackPoint(G.nodes[n]["y"], G.nodes[n]["x"]))
     return gpx.to_xml()
 
 
@@ -158,13 +160,9 @@ def route_flow(G, route, distance_km):
         return math.degrees(math.atan2(x, y))
 
     bearings = [bearing(route[i], route[i + 1]) for i in range(len(route) - 1)]
-    turns = sum(
-        1 for i in range(len(bearings) - 1)
-        if abs(bearings[i + 1] - bearings[i]) > 30
-    )
+    turns = sum(1 for i in range(len(bearings) - 1) if abs(bearings[i + 1] - bearings[i]) > 30)
 
     tpk = turns / max(distance_km, 0.1)
-
     if tpk < 12:
         return "Smooth 🟢"
     elif tpk < 20:
@@ -183,11 +181,11 @@ def folium_route_preview(G, route):
     return m
 
 # -----------------------------
-# UI — BOX 1 (GREEN)
+# UI — HEADER
 # -----------------------------
 st.markdown(
     """
-    <div class="green-box" style="text-align:center;">
+    <div class="green-box">
         <h1>GPX Route Generator</h1>
         <p>
             Click on the map to dictate where routes should start and/or end.
@@ -199,11 +197,11 @@ st.markdown(
 )
 
 # -----------------------------
-# UI — BOX 2 (BLUE)
+# UI — SPORT TYPE BOX
 # -----------------------------
 st.markdown(
     """
-    <div class="blue-box" style="text-align:center;">
+    <div class="blue-box">
         <h3>Sport type</h3>
         <p>Select your mode for travel and maps will auto adjust</p>
     </div>
@@ -212,7 +210,7 @@ st.markdown(
 )
 
 st.session_state.transport_mode = st.radio(
-    "Transport mode",
+    "Sport type",
     ["🏃 Running", "🚴 Cycling", "🚶 Walking / Hiking"],
     horizontal=True,
     label_visibility="collapsed",
@@ -220,17 +218,20 @@ st.session_state.transport_mode = st.radio(
 
 st.markdown(
     f"""
-    <div class="blue-box" style="text-align:center;padding:10px;">
+    <div class="blue-box" style="padding:10px;">
         <b>Selected mode:</b> {st.session_state.transport_mode}
     </div>
     """,
     unsafe_allow_html=True
 )
 
+# -----------------------------
+# UI — ROUTE TYPE BOX
+# -----------------------------
 st.markdown(
     """
-    <div class="blue-box" style="text-align:center;">
-        <h3>Route Type</h3>
+    <div class="blue-box">
+        <h3>Route type</h3>
     </div>
     """,
     unsafe_allow_html=True
@@ -239,15 +240,16 @@ st.markdown(
 route_mode = st.radio(
     "Route type",
     ["Loop (1 click)", "Point-to-point (2 clicks)"],
+    horizontal=True,
     label_visibility="collapsed",
 )
 
 # -----------------------------
-# UI — BOX 3 (BLUE)
+# UI — DISTANCE SETTINGS BOX
 # -----------------------------
 st.markdown(
     """
-    <div class="blue-box" style="text-align:center;">
+    <div class="blue-box">
         <h3>Distance settings</h3>
     </div>
     """,
