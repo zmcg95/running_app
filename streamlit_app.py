@@ -24,12 +24,15 @@ st.markdown(
             padding-top: 2rem;
             padding-bottom: 2rem;
         }
+
         .green-box {
             background:#f0f7f4;
             padding:25px;
             border-radius:15px;
             margin-bottom:20px;
+            text-align:center;
         }
+
         .blue-box {
             background:#eef3ff;
             padding:25px;
@@ -37,8 +40,15 @@ st.markdown(
             margin-bottom:20px;
             text-align:center;
         }
+
+        /* 🔥 Center Streamlit radio buttons */
         div[role="radiogroup"] {
+            display: flex;
             justify-content: center;
+        }
+
+        div[role="radiogroup"] > label {
+            margin: 0 14px;
         }
     </style>
     """,
@@ -113,8 +123,11 @@ def route_to_gpx(G, route):
     seg = gpxpy.gpx.GPXTrackSegment()
     gpx.tracks.append(track)
     track.segments.append(seg)
+
     for n in route:
-        seg.points.append(gpxpy.gpx.GPXTrackPoint(G.nodes[n]["y"], G.nodes[n]["x"]))
+        seg.points.append(
+            gpxpy.gpx.GPXTrackPoint(G.nodes[n]["y"], G.nodes[n]["x"])
+        )
     return gpx.to_xml()
 
 
@@ -124,30 +137,27 @@ def format_time(minutes):
     return f"{m}:{s:02d}"
 
 
+# 🔧 UPDATED: surface breakdown (no regrouping)
 def surface_breakdown(G, route):
     totals = defaultdict(float)
-    total = 0
+    total_length = 0
+
     for u, v in zip(route[:-1], route[1:]):
         edge = G[u][v][0]
         length = edge["length"]
-        total += length
+        total_length += length
+
         surface = edge.get("surface")
         highway = edge.get("highway")
 
-        if surface in ["dirt", "earth", "ground", "grass", "mud", "sand"]:
-            key = "Trail"
-        elif surface in ["gravel", "fine_gravel", "pebblestone"]:
-            key = "Gravel"
-        elif surface in ["asphalt", "paved", "concrete"]:
-            key = "Paved"
-        elif highway in ["path", "footway", "track"]:
-            key = "Trail"
-        else:
-            key = "Other"
+        # Use surface if present, otherwise highway, otherwise unknown
+        key = surface if surface else highway if highway else "unknown"
+        totals[str(key)] += length
 
-        totals[key] += length
-
-    return {k: int((v / total) * 100) for k, v in totals.items()}
+    return {
+        k: int((v / total_length) * 100)
+        for k, v in totals.items()
+    }
 
 
 def route_flow(G, route, distance_km):
@@ -160,9 +170,13 @@ def route_flow(G, route, distance_km):
         return math.degrees(math.atan2(x, y))
 
     bearings = [bearing(route[i], route[i + 1]) for i in range(len(route) - 1)]
-    turns = sum(1 for i in range(len(bearings) - 1) if abs(bearings[i + 1] - bearings[i]) > 30)
+    turns = sum(
+        1 for i in range(len(bearings) - 1)
+        if abs(bearings[i + 1] - bearings[i]) > 30
+    )
 
     tpk = turns / max(distance_km, 0.1)
+
     if tpk < 12:
         return "Smooth 🟢"
     elif tpk < 20:
@@ -174,9 +188,11 @@ def route_flow(G, route, distance_km):
 def folium_route_preview(G, route):
     coords = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in route]
     m = folium.Map(location=coords[0], zoom_start=14, tiles="OpenStreetMap")
+
     folium.PolyLine(coords, color="#1f77b4", weight=5).add_to(m)
     folium.Marker(coords[0], icon=folium.Icon(color="green")).add_to(m)
     folium.Marker(coords[-1], icon=folium.Icon(color="red")).add_to(m)
+
     m.fit_bounds(coords)
     return m
 
