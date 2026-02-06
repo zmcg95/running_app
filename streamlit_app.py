@@ -61,31 +61,33 @@ def edge_overlap(a,b):
     eb = set(zip(b[:-1], b[1:]))
     return len(ea & eb)/max(len(ea),1)
 
-# Circular loop generator
+# Circular loop generator (start=end)
 def generate_circular_loops(G, start, target, tol, k=3):
     routes = []
     lengths, paths = nx.single_source_dijkstra(G, start, weight="length")
     candidates = [n for n,d in lengths.items() if abs(d-target/2)<=tol]
-
-    random.shuffle(candidates)  # randomize to get different routes
+    random.shuffle(candidates)
 
     for mid in candidates:
         try:
             out = paths[mid]
             back = nx.shortest_path(G, mid, start, weight="length")
-            total = path_length(G, out)+path_length(G, back)
-            if abs(total-target)>tol:
-                continue
+            # only accept if backtrack <25% edges
             if edge_overlap(out, back) > 0.25:
                 continue
-            routes.append(out + back[1:])
-            if len(routes)>=k:
+            total = path_length(G, out)+path_length(G, back)
+            if abs(total-target) > tol:
+                continue
+            # merge out+back excluding duplicate mid
+            route = out + back[1:]
+            routes.append(route)
+            if len(routes) >= k:
                 return routes
         except nx.NetworkXNoPath:
             continue
-    # fallback if nothing
+    # fallback
     if not routes:
-        routes.append(list(lengths.keys())[:1])  # trivial fallback
+        routes.append([start])
     return routes
 
 def surface_breakdown(G, route):
@@ -115,7 +117,9 @@ def route_to_gpx(G, route):
 def folium_route_preview(G, route):
     coords = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in route]
     m = folium.Map(location=coords[0], zoom_start=14)
-    folium.PolyLine(coords, weight=5).add_to(m)
+    folium.PolyLine(coords, weight=5, color="#1f77b4").add_to(m)
+    folium.Marker(coords[0], icon=folium.Icon(color="green",icon="play")).add_to(m)
+    folium.Marker(coords[-1], icon=folium.Icon(color="red",icon="stop")).add_to(m)
     m.fit_bounds(coords)
     return m
 
@@ -124,7 +128,7 @@ def folium_route_preview(G, route):
 # -----------------------------
 st.markdown('<div class="green-box"><h1>GPX Route Generator</h1><p>Click on the map to set your start point. Loop mode generates circular routes.</p></div>', unsafe_allow_html=True)
 
-# Sport mode
+# Sport type
 st.markdown('<div class="blue-box"><h3>Sport type</h3></div>', unsafe_allow_html=True)
 _, mid, _ = st.columns([1,2,1])
 with mid:
@@ -151,17 +155,19 @@ if map_data and map_data.get("last_clicked"):
     if len(st.session_state.clicks)<max_clicks:
         st.session_state.clicks.append((map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]))
 
-# Generate
+# Generate routes
 if st.button("Generate Routes"):
     center = st.session_state.clicks[0]
     G = ox.graph_from_point(center, dist=10000, network_type="walk")
     G = G.to_undirected()
     start = nearest_node_manual(G, *center)
+
     if route_mode.startswith("Loop"):
         st.session_state.routes = generate_circular_loops(G, start, target_distance, tolerance)
     else:
         end = nearest_node_manual(G, *st.session_state.clicks[1])
         st.session_state.routes = [nx.shortest_path(G,start,end,weight="length")]
+
     st.session_state.graph = G
 
 # Display + download
@@ -181,6 +187,5 @@ if st.session_state.routes:
         </div>
         """, unsafe_allow_html=True)
 
-        # UNIQUE keys for each route
         st_folium(folium_route_preview(G,route), height=300, width=300, key=f"map_{i}")
         st.download_button("⬇️ Download GPX", route_to_gpx(G,route), f"route_{i+1}.gpx", "application/gpx+xml", key=f"download_{i}")
