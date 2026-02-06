@@ -193,7 +193,18 @@ st.markdown(
 # -----------------------------
 # 🔧 NEW: Transport mode selector (UI only)
 # -----------------------------
-st.markdown("### 🚦 Mode of Transport")
+
+st.markdown(
+    """
+    <div style="background:#f0f7f4;padding:25px;border-radius:15px;text-align:center;">
+        <h1>Mode of Transport</h1>
+        <p>Click map to set start/end. Generate runnable trail routes.</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# st.markdown("### 🚦 Mode of Transport")
 
 st.session_state.transport_mode = st.radio(
     "Select transport mode",
