@@ -126,7 +126,7 @@ def folium_route_preview(G, route):
 # -----------------------------
 # UI
 # -----------------------------
-st.markdown('<div class="green-box"><h1>GPX Route Generator</h1><p>Click on the map to set your start point. Loop mode generates circular routes.</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="green-box"><h1>GPX Route Generator</h1><p>Click on the map to set your start point. Loop mode generates circular routes. Or select Point-to-point mode to customise start and end points. Download the routes directly in GPX format for free. </p></div>', unsafe_allow_html=True)
 
 # Sport type
 st.markdown('<div class="blue-box"><h3>Sport type</h3></div>', unsafe_allow_html=True)
