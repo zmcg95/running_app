@@ -1,4 +1,4 @@
-import streamlit as st
+t import streamlit as st
 import osmnx as ox
 import networkx as nx
 import math
@@ -183,8 +183,8 @@ def folium_route_preview(G, route):
 st.markdown(
     """
     <div style="background:#f0f7f4;padding:25px;border-radius:15px;text-align:center;">
-        <h1>🏃 Trail Runner Route GPX Generator</h1>
-        <p>Click map to set start/end. Generate runnable trail routes.</p>
+        <h1>GPX Route Generator</h1>
+        <p>Click on the map to dictate where routes should start and/or end. Use 1 click for auto generated routes</p>
     </div>
     """,
     unsafe_allow_html=True
@@ -197,14 +197,12 @@ st.markdown(
 st.markdown(
     """
     <div style="background:#f0f7f4;padding:25px;border-radius:15px;text-align:center;">
-        <h1>Mode of Transport</h1>
-        <p>Click map to set start/end. Generate runnable trail routes.</p>
+        <h3>Sport type</h3>
+        <p>Select your mode for travel and maps will auto adjust</p>
     </div>
     """,
     unsafe_allow_html=True
 )
-
-# st.markdown("### 🚦 Mode of Transport")
 
 st.session_state.transport_mode = st.radio(
     "Select transport mode",
