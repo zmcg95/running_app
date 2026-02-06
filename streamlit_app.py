@@ -15,7 +15,7 @@ MINUTES_PER_KM = 5
 CALORIES_PER_KM = 60
 
 # -----------------------------
-# Page polish
+# Page polish + box styles
 # -----------------------------
 st.markdown(
     """
@@ -23,6 +23,18 @@ st.markdown(
         .block-container {
             padding-top: 2rem;
             padding-bottom: 2rem;
+        }
+        .green-box {
+            background:#f0f7f4;
+            padding:25px;
+            border-radius:15px;
+            margin-bottom:20px;
+        }
+        .blue-box {
+            background:#eef3ff;
+            padding:25px;
+            border-radius:15px;
+            margin-bottom:20px;
         }
     </style>
     """,
@@ -41,7 +53,6 @@ if "routes" not in st.session_state:
 if "graph" not in st.session_state:
     st.session_state.graph = None
 
-# 🔧 NEW: transport mode (UI only)
 if "transport_mode" not in st.session_state:
     st.session_state.transport_mode = "🏃 Running"
 
@@ -54,7 +65,6 @@ def haversine(lat1, lon1, lat2, lon2):
     phi2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
-
     a = (
         math.sin(dphi / 2) ** 2
         + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
@@ -99,7 +109,6 @@ def route_to_gpx(G, route):
     seg = gpxpy.gpx.GPXTrackSegment()
     gpx.tracks.append(track)
     track.segments.append(seg)
-
     for n in route:
         seg.points.append(
             gpxpy.gpx.GPXTrackPoint(G.nodes[n]["y"], G.nodes[n]["x"])
@@ -116,12 +125,10 @@ def format_time(minutes):
 def surface_breakdown(G, route):
     totals = defaultdict(float)
     total = 0
-
     for u, v in zip(route[:-1], route[1:]):
         edge = G[u][v][0]
         length = edge["length"]
         total += length
-
         surface = edge.get("surface")
         highway = edge.get("highway")
 
@@ -169,34 +176,34 @@ def route_flow(G, route, distance_km):
 def folium_route_preview(G, route):
     coords = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in route]
     m = folium.Map(location=coords[0], zoom_start=14, tiles="OpenStreetMap")
-
     folium.PolyLine(coords, color="#1f77b4", weight=5).add_to(m)
     folium.Marker(coords[0], icon=folium.Icon(color="green")).add_to(m)
     folium.Marker(coords[-1], icon=folium.Icon(color="red")).add_to(m)
-
     m.fit_bounds(coords)
     return m
 
 # -----------------------------
-# Header
+# UI — BOX 1 (GREEN)
 # -----------------------------
 st.markdown(
     """
-    <div style="background:#f0f7f4;padding:25px;border-radius:15px;text-align:center;">
+    <div class="green-box" style="text-align:center;">
         <h1>GPX Route Generator</h1>
-        <p>Click on the map to dictate where routes should start and/or end. Use 1 click for auto generated routes</p>
+        <p>
+            Click on the map to dictate where routes should start and/or end.
+            Use 1 click for auto generated routes.
+        </p>
     </div>
     """,
     unsafe_allow_html=True
 )
 
 # -----------------------------
-# 🔧 NEW: Transport mode selector (UI only)
+# UI — BOX 2 (BLUE)
 # -----------------------------
-
 st.markdown(
     """
-    <div style="background:#f0f7f4;padding:25px;border-radius:15px;text-align:center;">
+    <div class="blue-box" style="text-align:center;">
         <h3>Sport type</h3>
         <p>Select your mode for travel and maps will auto adjust</p>
     </div>
@@ -205,7 +212,7 @@ st.markdown(
 )
 
 st.session_state.transport_mode = st.radio(
-    "Select transport mode",
+    "Transport mode",
     ["🏃 Running", "🚴 Cycling", "🚶 Walking / Hiking"],
     horizontal=True,
     label_visibility="collapsed",
@@ -213,17 +220,39 @@ st.session_state.transport_mode = st.radio(
 
 st.markdown(
     f"""
-    <div style="background:#eef3ff;padding:10px;border-radius:10px;text-align:center;">
+    <div class="blue-box" style="text-align:center;padding:10px;">
         <b>Selected mode:</b> {st.session_state.transport_mode}
     </div>
     """,
-    unsafe_allow_html=True,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="blue-box" style="text-align:center;">
+        <h3>Route Type</h3>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+route_mode = st.radio(
+    "Route type",
+    ["Loop (1 click)", "Point-to-point (2 clicks)"],
+    label_visibility="collapsed",
 )
 
 # -----------------------------
-# Controls
+# UI — BOX 3 (BLUE)
 # -----------------------------
-route_mode = st.radio("Route Type", ["Loop (1 click)", "Point-to-point (2 clicks)"])
+st.markdown(
+    """
+    <div class="blue-box" style="text-align:center;">
+        <h3>Distance settings</h3>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 target_distance = st.number_input(
     "Target Distance (meters)", 500, 50000, 3000, 500
