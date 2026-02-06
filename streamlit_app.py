@@ -35,12 +35,15 @@ st.markdown(
 if "clicks" not in st.session_state:
     st.session_state.clicks = []
 
-# 🔧 EDIT: persist graph + routes
 if "routes" not in st.session_state:
     st.session_state.routes = None
 
 if "graph" not in st.session_state:
     st.session_state.graph = None
+
+# 🔧 NEW: transport mode (UI only)
+if "transport_mode" not in st.session_state:
+    st.session_state.transport_mode = "🏃 Running"
 
 # -----------------------------
 # Helpers
@@ -148,7 +151,10 @@ def route_flow(G, route, distance_km):
         return math.degrees(math.atan2(x, y))
 
     bearings = [bearing(route[i], route[i + 1]) for i in range(len(route) - 1)]
-    turns = sum(1 for i in range(len(bearings) - 1) if abs(bearings[i+1] - bearings[i]) > 30)
+    turns = sum(
+        1 for i in range(len(bearings) - 1)
+        if abs(bearings[i + 1] - bearings[i]) > 30
+    )
 
     tpk = turns / max(distance_km, 0.1)
 
@@ -185,6 +191,27 @@ st.markdown(
 )
 
 # -----------------------------
+# 🔧 NEW: Transport mode selector (UI only)
+# -----------------------------
+st.markdown("### 🚦 Mode of Transport")
+
+st.session_state.transport_mode = st.radio(
+    "Select transport mode",
+    ["🏃 Running", "🚴 Cycling", "🚶 Walking / Hiking"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+st.markdown(
+    f"""
+    <div style="background:#eef3ff;padding:10px;border-radius:10px;text-align:center;">
+        <b>Selected mode:</b> {st.session_state.transport_mode}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# -----------------------------
 # Controls
 # -----------------------------
 route_mode = st.radio("Route Type", ["Loop (1 click)", "Point-to-point (2 clicks)"])
@@ -199,7 +226,7 @@ tolerance = st.number_input(
 
 if st.button("Reset map clicks"):
     st.session_state.clicks = []
-    st.session_state.routes = None  # 🔧 EDIT
+    st.session_state.routes = None
 
 # -----------------------------
 # Main map
@@ -222,7 +249,7 @@ if map_data and map_data.get("last_clicked"):
         st.session_state.clicks.append((lat, lon))
 
 # -----------------------------
-# Generate Routes (EVENT)
+# Generate Routes
 # -----------------------------
 if st.button("Generate Routes"):
     needed = 1 if route_mode.startswith("Loop") else 2
@@ -254,7 +281,7 @@ if st.button("Generate Routes"):
         )
 
 # -----------------------------
-# Display Routes (PERSISTENT)
+# Display Routes
 # -----------------------------
 if st.session_state.routes:
     G = st.session_state.graph
@@ -277,7 +304,7 @@ if st.session_state.routes:
                     <p><b>Calories:</b> 🔥 {int(km * CALORIES_PER_KM)} kcal</p>
                     <p><b>Flow:</b> {flow}</p>
                     <p><b>Surface:</b><br>
-                    {" · ".join([f"{k} {v}%" for k,v in surfaces.items()])}
+                    {" · ".join([f"{k} {v}%" for k, v in surfaces.items()])}
                     </p>
                 </div>
                 """,
