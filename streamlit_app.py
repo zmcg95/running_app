@@ -7,9 +7,6 @@ import gpxpy.gpx
 from folium.plugins import TimestampedGeoJson
 from datetime import datetime, timedelta
 
-# -----------------------------
-# Page Setup
-# -----------------------------
 st.set_page_config(layout="wide")
 st.title("🚁 Drone Route Planner (A → B)")
 
@@ -17,6 +14,9 @@ st.title("🚁 Drone Route Planner (A → B)")
 # Session State
 # -----------------------------
 st.session_state.setdefault("clicks", [])
+st.session_state.setdefault("route_ready", False)
+st.session_state.setdefault("route_map", None)
+st.session_state.setdefault("coords", None)
 
 # -----------------------------
 # Helpers
@@ -29,16 +29,14 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-def interpolate_points(start, end, steps=60):
+def interpolate_points(start, end, steps=80):
     lat1, lon1 = start
     lat2, lon2 = end
-    points = []
-    for i in range(steps + 1):
-        t = i / steps
-        lat = lat1 + (lat2 - lat1) * t
-        lon = lon1 + (lon2 - lon1) * t
-        points.append((lat, lon))
-    return points
+    return [
+        (lat1 + (lat2 - lat1) * i / steps,
+         lon1 + (lon2 - lon1) * i / steps)
+        for i in range(steps + 1)
+    ]
 
 def create_gpx(coords, altitude):
     gpx = gpxpy.gpx.GPX()
@@ -54,7 +52,7 @@ def create_gpx(coords, altitude):
 
     return gpx.to_xml()
 
-def create_animation(coords, speed_mps):
+def create_animation(coords):
     features = []
     start_time = datetime.now()
 
@@ -87,24 +85,22 @@ def create_animation(coords, speed_mps):
 # Controls
 # -----------------------------
 col1, col2 = st.columns(2)
-
 with col1:
     altitude = st.slider("Flight Altitude (meters)", 10, 200, 50)
-
 with col2:
     speed = st.slider("Speed (m/s)", 1, 25, 10)
 
 st.markdown("Click TWO points on the map: Start and Destination.")
 
 # -----------------------------
-# Map
+# Click Map (static)
 # -----------------------------
-m = folium.Map(location=[52, 5], zoom_start=6)
+base_map = folium.Map(location=[52, 5], zoom_start=6)
 
 for lat, lon in st.session_state.clicks:
-    folium.Marker([lat, lon]).add_to(m)
+    folium.Marker([lat, lon]).add_to(base_map)
 
-map_data = st_folium(m, height=500, width=900)
+map_data = st_folium(base_map, height=500, width=900, key="click_map")
 
 if map_data and map_data.get("last_clicked"):
     if len(st.session_state.clicks) < 2:
@@ -114,53 +110,57 @@ if map_data and map_data.get("last_clicked"):
         )
 
 # -----------------------------
-# Route Calculation
+# Build Route ONCE
 # -----------------------------
-if len(st.session_state.clicks) == 2:
-    start, end = st.session_state.clicks
+if len(st.session_state.clicks) == 2 and not st.session_state.route_ready:
 
+    start, end = st.session_state.clicks
     distance = haversine(start[0], start[1], end[0], end[1])
     eta = distance / speed
+    coords = interpolate_points(start, end)
 
-    coords = interpolate_points(start, end, steps=80)
+    st.session_state.coords = coords
 
-    st.subheader("📊 Flight Info")
-    st.write(f"Distance: **{distance/1000:.2f} km**")
-    st.write(f"Estimated Time: **{eta/60:.2f} minutes**")
-    st.write(f"Altitude: **{altitude} m**")
-
-    # -----------------------------
-    # Animated Map
-    # -----------------------------
     route_map = folium.Map(location=start, zoom_start=14)
 
-    # Draw route line
     folium.PolyLine(coords, color="blue", weight=4).add_to(route_map)
-
-    # Add start and end markers
     folium.Marker(start, icon=folium.Icon(color="green")).add_to(route_map)
     folium.Marker(end, icon=folium.Icon(color="red")).add_to(route_map)
 
-    # Add animation
     TimestampedGeoJson(
-        create_animation(coords, speed),
+        create_animation(coords),
         period="PT1S",
         add_last_point=True,
         auto_play=True,
         loop=False,
         max_speed=1,
-        loop_button=True,
-        date_options="YYYY/MM/DD HH:mm:ss",
-        time_slider_drag_update=True,
     ).add_to(route_map)
 
-    st.subheader("🛰️ Drone Route Animation")
-    st_folium(route_map, height=500, width=900)
+    st.session_state.route_map = route_map
+    st.session_state.route_ready = True
 
-    # -----------------------------
-    # GPX Download
-    # -----------------------------
-    gpx_data = create_gpx(coords, altitude)
+    st.session_state.distance = distance
+    st.session_state.eta = eta
+
+# -----------------------------
+# Display Route (NO REBUILD)
+# -----------------------------
+if st.session_state.route_ready:
+
+    st.subheader("📊 Flight Info")
+    st.write(f"Distance: **{st.session_state.distance/1000:.2f} km**")
+    st.write(f"Estimated Time: **{st.session_state.eta/60:.2f} minutes**")
+    st.write(f"Altitude: **{altitude} m**")
+
+    st.subheader("🛰️ Drone Route Animation")
+    st_folium(
+        st.session_state.route_map,
+        height=500,
+        width=900,
+        key="animation_map"
+    )
+
+    gpx_data = create_gpx(st.session_state.coords, altitude)
 
     st.download_button(
         "⬇️ Download Drone Route (GPX)",
@@ -172,5 +172,8 @@ if len(st.session_state.clicks) == 2:
 # -----------------------------
 # Reset
 # -----------------------------
-if st.button("Reset Points"):
+if st.button("Reset Mission"):
     st.session_state.clicks = []
+    st.session_state.route_ready = False
+    st.session_state.route_map = None
+    st.session_state.coords = None
