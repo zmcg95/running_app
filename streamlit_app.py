@@ -142,15 +142,21 @@ if len(st.session_state.clicks) == 2 and not st.session_state.route_ready:
     folium.Marker(start, icon=folium.Icon(color="green")).add_to(route_map)
     folium.Marker(end, icon=folium.Icon(color="red")).add_to(route_map)
 
-    # Animation layer
+    # Animation layer with visible controls
     TimestampedGeoJson(
         create_animation(coords),
         period="PT1S",
+        duration="PT1S",
+        transition_time=200,
         add_last_point=True,
-        auto_play=True,
+        auto_play=False,           # show play button
         loop=False,
-        max_speed=1,
+        loop_button=True,
+        time_slider_drag_update=True,
+        date_options="HH:mm:ss",
     ).add_to(route_map)
+
+    folium.LayerControl().add_to(route_map)
 
     st.session_state.route_map = route_map
     st.session_state.coords = coords
@@ -159,7 +165,7 @@ if len(st.session_state.clicks) == 2 and not st.session_state.route_ready:
     st.session_state.route_ready = True
 
 # --------------------------------------------------
-# Display Stable Animation (NO st_folium here)
+# Display Stable Animation
 # --------------------------------------------------
 if st.session_state.route_ready:
 
@@ -174,7 +180,7 @@ if st.session_state.route_ready:
 
     components.html(
         map_html,
-        height=550,
+        height=600,
         scrolling=False
     )
 
