@@ -10,6 +10,7 @@ networkx
 gpxpy
 folium
 streamlit-folium
+folium
 
 
 
