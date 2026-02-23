@@ -5,8 +5,7 @@ import streamlit.components.v1 as components
 import math
 import gpxpy
 import gpxpy.gpx
-from folium.plugins import TimestampedGeoJson
-from datetime import datetime, timedelta
+import json
 
 # --------------------------------------------------
 # Page Setup
@@ -19,7 +18,6 @@ st.title("🚁 Drone Route Planner (A → B)")
 # --------------------------------------------------
 st.session_state.setdefault("clicks", [])
 st.session_state.setdefault("route_ready", False)
-st.session_state.setdefault("route_map", None)
 st.session_state.setdefault("coords", None)
 st.session_state.setdefault("distance", 0)
 st.session_state.setdefault("eta", 0)
@@ -35,7 +33,7 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-def interpolate_points(start, end, steps=100):
+def interpolate_points(start, end, steps=200):
     lat1, lon1 = start
     lat2, lon2 = end
     return [
@@ -60,35 +58,6 @@ def create_gpx(coords, altitude):
 
     return gpx.to_xml()
 
-def create_animation(coords):
-    features = []
-    start_time = datetime.now()
-
-    for i, (lat, lon) in enumerate(coords):
-        timestamp = start_time + timedelta(seconds=i)
-        features.append({
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [lon, lat],
-            },
-            "properties": {
-                "time": timestamp.isoformat(),
-                "icon": "circle",
-                "iconstyle": {
-                    "fillColor": "red",
-                    "fillOpacity": 1,
-                    "stroke": "true",
-                    "radius": 6
-                }
-            },
-        })
-
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-    }
-
 # --------------------------------------------------
 # Controls
 # --------------------------------------------------
@@ -103,7 +72,7 @@ with col2:
 st.markdown("Click TWO points on the map: **Start** and **Destination**.")
 
 # --------------------------------------------------
-# Click Map (Interactive)
+# Click Map
 # --------------------------------------------------
 click_map = folium.Map(location=[52, 5], zoom_start=6)
 
@@ -122,7 +91,7 @@ if map_data and map_data.get("last_clicked"):
         )
 
 # --------------------------------------------------
-# Build Route ONCE
+# Build Route
 # --------------------------------------------------
 if len(st.session_state.clicks) == 2 and not st.session_state.route_ready:
 
@@ -133,39 +102,13 @@ if len(st.session_state.clicks) == 2 and not st.session_state.route_ready:
 
     coords = interpolate_points(start, end)
 
-    route_map = folium.Map(location=start, zoom_start=14)
-
-    # Draw path
-    folium.PolyLine(coords, color="blue", weight=4).add_to(route_map)
-
-    # Start / End markers
-    folium.Marker(start, icon=folium.Icon(color="green")).add_to(route_map)
-    folium.Marker(end, icon=folium.Icon(color="red")).add_to(route_map)
-
-    # Animation layer with visible controls
-    TimestampedGeoJson(
-        create_animation(coords),
-        period="PT1S",
-        duration="PT1S",
-        transition_time=200,
-        add_last_point=True,
-        auto_play=False,           # show play button
-        loop=False,
-        loop_button=True,
-        time_slider_drag_update=True,
-        date_options="HH:mm:ss",
-    ).add_to(route_map)
-
-    folium.LayerControl().add_to(route_map)
-
-    st.session_state.route_map = route_map
     st.session_state.coords = coords
     st.session_state.distance = distance
     st.session_state.eta = eta
     st.session_state.route_ready = True
 
 # --------------------------------------------------
-# Display Stable Animation
+# Display Animation (Pure JS — Guaranteed)
 # --------------------------------------------------
 if st.session_state.route_ready:
 
@@ -176,13 +119,63 @@ if st.session_state.route_ready:
 
     st.subheader("🛰️ Drone Route Animation")
 
-    map_html = st.session_state.route_map._repr_html_()
+    coords = st.session_state.coords
+    coords_json = json.dumps(coords)
 
-    components.html(
-        map_html,
-        height=600,
-        scrolling=False
-    )
+    html_code = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8" />
+        <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+        <style>
+            #map {{
+                width: 100%;
+                height: 550px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div id="map"></div>
+
+        <script>
+            var coords = {coords_json};
+
+            var map = L.map('map').setView(coords[0], 14);
+
+            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                maxZoom: 19
+            }}).addTo(map);
+
+            var polyline = L.polyline(coords, {{color: 'blue'}}).addTo(map);
+            map.fitBounds(polyline.getBounds());
+
+            var droneIcon = L.circleMarker(coords[0], {{
+                radius: 8,
+                color: 'red',
+                fillColor: 'red',
+                fillOpacity: 1
+            }}).addTo(map);
+
+            var i = 0;
+
+            function moveDrone() {{
+                if (i < coords.length) {{
+                    droneIcon.setLatLng(coords[i]);
+                    i++;
+                }} else {{
+                    clearInterval(animation);
+                }}
+            }}
+
+            var animation = setInterval(moveDrone, 50);
+        </script>
+    </body>
+    </html>
+    """
+
+    components.html(html_code, height=600)
 
     gpx_data = create_gpx(st.session_state.coords, altitude)
 
@@ -199,5 +192,4 @@ if st.session_state.route_ready:
 if st.button("Reset Mission"):
     st.session_state.clicks = []
     st.session_state.route_ready = False
-    st.session_state.route_map = None
     st.session_state.coords = None
