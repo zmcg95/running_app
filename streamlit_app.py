@@ -1,38 +1,22 @@
 import streamlit as st
-import osmnx as ox
-import networkx as nx
+import folium
+from streamlit_folium import st_folium
 import math
 import gpxpy
 import gpxpy.gpx
-import folium
-from streamlit_folium import st_folium
-from collections import defaultdict
-import random
+from folium.plugins import TimestampedGeoJson
+from datetime import datetime, timedelta
 
 # -----------------------------
-# Constants
+# Page Setup
 # -----------------------------
-MINUTES_PER_KM = 5
-CALORIES_PER_KM = 60
+st.set_page_config(layout="wide")
+st.title("🚁 Drone Route Planner (A → B)")
 
 # -----------------------------
-# Styles
-# -----------------------------
-st.markdown("""
-<style>
-.block-container { padding-top: 2rem; padding-bottom: 2rem; }
-.green-box { background:#f0f7f4; padding:25px; border-radius:15px; margin-bottom:20px; text-align:center; }
-.blue-box { background:#eef3ff; padding:25px; border-radius:15px; margin-bottom:20px; text-align:center; }
-</style>
-""", unsafe_allow_html=True)
-
-# -----------------------------
-# Session state
+# Session State
 # -----------------------------
 st.session_state.setdefault("clicks", [])
-st.session_state.setdefault("routes", None)
-st.session_state.setdefault("graph", None)
-st.session_state.setdefault("transport_mode", "🏃 Running")
 
 # -----------------------------
 # Helpers
@@ -43,149 +27,150 @@ def haversine(lat1, lon1, lat2, lon2):
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return 2*R*math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-def nearest_node_manual(G, lat, lon):
-    best, best_dist = None, float("inf")
-    for n, d in G.nodes(data=True):
-        dist = haversine(lat, lon, d["y"], d["x"])
-        if dist < best_dist:
-            best, best_dist = n, dist
-    return best
+def interpolate_points(start, end, steps=60):
+    lat1, lon1 = start
+    lat2, lon2 = end
+    points = []
+    for i in range(steps + 1):
+        t = i / steps
+        lat = lat1 + (lat2 - lat1) * t
+        lon = lon1 + (lon2 - lon1) * t
+        points.append((lat, lon))
+    return points
 
-def path_length(G, path):
-    return sum(G[u][v][0]["length"] for u,v in zip(path[:-1], path[1:]))
-
-def edge_overlap(a,b):
-    ea = set(zip(a[:-1], a[1:]))
-    eb = set(zip(b[:-1], b[1:]))
-    return len(ea & eb)/max(len(ea),1)
-
-# Circular loop generator (start=end)
-def generate_circular_loops(G, start, target, tol, k=3):
-    routes = []
-    lengths, paths = nx.single_source_dijkstra(G, start, weight="length")
-    candidates = [n for n,d in lengths.items() if abs(d-target/2)<=tol]
-    random.shuffle(candidates)
-
-    for mid in candidates:
-        try:
-            out = paths[mid]
-            back = nx.shortest_path(G, mid, start, weight="length")
-            # only accept if backtrack <25% edges
-            if edge_overlap(out, back) > 0.25:
-                continue
-            total = path_length(G, out)+path_length(G, back)
-            if abs(total-target) > tol:
-                continue
-            # merge out+back excluding duplicate mid
-            route = out + back[1:]
-            routes.append(route)
-            if len(routes) >= k:
-                return routes
-        except nx.NetworkXNoPath:
-            continue
-    # fallback
-    if not routes:
-        routes.append([start])
-    return routes
-
-def surface_breakdown(G, route):
-    totals = defaultdict(float)
-    total = 0
-    for u,v in zip(route[:-1], route[1:]):
-        e = G[u][v][0]
-        totals[str(e.get("surface") or e.get("highway") or "unknown")] += e["length"]
-        total += e["length"]
-    return {k:int((v/total)*100) for k,v in totals.items()}
-
-def route_flow(route, km):
-    turns = sum(1 for i in range(len(route)-2) if route[i]!=route[i+2])
-    tpk = turns/max(km,0.1)
-    return "Smooth 🟢" if tpk<12 else "Moderate 🟡" if tpk<20 else "Twisty 🔴"
-
-def route_to_gpx(G, route):
+def create_gpx(coords, altitude):
     gpx = gpxpy.gpx.GPX()
     track = gpxpy.gpx.GPXTrack()
-    seg = gpxpy.gpx.GPXTrackSegment()
-    track.segments.append(seg)
     gpx.tracks.append(track)
-    for n in route:
-        seg.points.append(gpxpy.gpx.GPXTrackPoint(G.nodes[n]["y"], G.nodes[n]["x"]))
+    segment = gpxpy.gpx.GPXTrackSegment()
+    track.segments.append(segment)
+
+    for lat, lon in coords:
+        segment.points.append(
+            gpxpy.gpx.GPXTrackPoint(lat, lon, elevation=altitude)
+        )
+
     return gpx.to_xml()
 
-def folium_route_preview(G, route):
-    coords = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in route]
-    m = folium.Map(location=coords[0], zoom_start=14)
-    folium.PolyLine(coords, weight=5, color="#1f77b4").add_to(m)
-    folium.Marker(coords[0], icon=folium.Icon(color="green",icon="play")).add_to(m)
-    folium.Marker(coords[-1], icon=folium.Icon(color="red",icon="stop")).add_to(m)
-    m.fit_bounds(coords)
-    return m
+def create_animation(coords, speed_mps):
+    features = []
+    start_time = datetime.now()
+
+    for i, (lat, lon) in enumerate(coords):
+        timestamp = start_time + timedelta(seconds=i)
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [lon, lat],
+            },
+            "properties": {
+                "time": timestamp.isoformat(),
+                "icon": "circle",
+                "iconstyle": {
+                    "fillColor": "red",
+                    "fillOpacity": 1,
+                    "stroke": "true",
+                    "radius": 6
+                }
+            },
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
 
 # -----------------------------
-# UI
+# Controls
 # -----------------------------
-st.markdown('<div class="green-box"><h1>GPX Route Generator</h1><p>Click on the map to set your start point. Loop mode generates circular routes. Or select Point-to-point mode to customise start and end points. Download the routes directly in GPX format for free. </p></div>', unsafe_allow_html=True)
+col1, col2 = st.columns(2)
 
-# Sport type
-st.markdown('<div class="blue-box"><h3>Sport type</h3></div>', unsafe_allow_html=True)
-_, mid, _ = st.columns([1,2,1])
-with mid:
-    st.session_state.transport_mode = st.radio("sport", ["🏃 Running","🚴 Cycling","🚶 Walking / Hiking"], horizontal=True, label_visibility="collapsed")
+with col1:
+    altitude = st.slider("Flight Altitude (meters)", 10, 200, 50)
 
-# Route type
-st.markdown('<div class="blue-box"><h3>Route type</h3></div>', unsafe_allow_html=True)
-_, mid, _ = st.columns([1,2,1])
-with mid:
-    route_mode = st.radio("route", ["Loop (1 click)","Point-to-point (2 clicks)"], horizontal=True, label_visibility="collapsed")
+with col2:
+    speed = st.slider("Speed (m/s)", 1, 25, 10)
 
-# Distance
-st.markdown('<div class="blue-box"><h3>Distance</h3></div>', unsafe_allow_html=True)
-target_distance = st.number_input("Target Distance (meters)", 500,50000,3000,500)
-tolerance = st.number_input("Distance Tolerance (meters)",50,5000,300,50)
+st.markdown("Click TWO points on the map: Start and Destination.")
 
+# -----------------------------
 # Map
-m = folium.Map(location=[52,5], zoom_start=6)
+# -----------------------------
+m = folium.Map(location=[52, 5], zoom_start=6)
+
 for lat, lon in st.session_state.clicks:
     folium.Marker([lat, lon]).add_to(m)
-map_data = st_folium(m, height=450, width=700)
+
+map_data = st_folium(m, height=500, width=900)
+
 if map_data and map_data.get("last_clicked"):
-    max_clicks = 1 if route_mode.startswith("Loop") else 2
-    if len(st.session_state.clicks)<max_clicks:
-        st.session_state.clicks.append((map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]))
+    if len(st.session_state.clicks) < 2:
+        st.session_state.clicks.append(
+            (map_data["last_clicked"]["lat"],
+             map_data["last_clicked"]["lng"])
+        )
 
-# Generate routes
-if st.button("Generate Routes"):
-    center = st.session_state.clicks[0]
-    G = ox.graph_from_point(center, dist=10000, network_type="walk")
-    G = G.to_undirected()
-    start = nearest_node_manual(G, *center)
+# -----------------------------
+# Route Calculation
+# -----------------------------
+if len(st.session_state.clicks) == 2:
+    start, end = st.session_state.clicks
 
-    if route_mode.startswith("Loop"):
-        st.session_state.routes = generate_circular_loops(G, start, target_distance, tolerance)
-    else:
-        end = nearest_node_manual(G, *st.session_state.clicks[1])
-        st.session_state.routes = [nx.shortest_path(G,start,end,weight="length")]
+    distance = haversine(start[0], start[1], end[0], end[1])
+    eta = distance / speed
 
-    st.session_state.graph = G
+    coords = interpolate_points(start, end, steps=80)
 
-# Display + download
-if st.session_state.routes:
-    G = st.session_state.graph
-    for i, route in enumerate(st.session_state.routes):
-        km = path_length(G,route)/1000
-        surfaces = surface_breakdown(G, route)
-        st.markdown(f"""
-        <div style="border:1px solid #ddd;border-radius:12px;padding:12px;">
-        <h4>Route {i+1}</h4>
-        <p><b>Distance:</b> {km:.2f} km</p>
-        <p><b>Time:</b> ⏱️ {int(km*MINUTES_PER_KM)} min</p>
-        <p><b>Calories:</b> 🔥 {int(km*CALORIES_PER_KM)} kcal</p>
-        <p><b>Flow:</b> {route_flow(route,km)}</p>
-        <p><b>Surface:</b> {" · ".join(f"{k} {v}%" for k,v in surfaces.items())}</p>
-        </div>
-        """, unsafe_allow_html=True)
+    st.subheader("📊 Flight Info")
+    st.write(f"Distance: **{distance/1000:.2f} km**")
+    st.write(f"Estimated Time: **{eta/60:.2f} minutes**")
+    st.write(f"Altitude: **{altitude} m**")
 
-        st_folium(folium_route_preview(G,route), height=300, width=300, key=f"map_{i}")
-        st.download_button("⬇️ Download GPX", route_to_gpx(G,route), f"route_{i+1}.gpx", "application/gpx+xml", key=f"download_{i}")
+    # -----------------------------
+    # Animated Map
+    # -----------------------------
+    route_map = folium.Map(location=start, zoom_start=14)
+
+    # Draw route line
+    folium.PolyLine(coords, color="blue", weight=4).add_to(route_map)
+
+    # Add start and end markers
+    folium.Marker(start, icon=folium.Icon(color="green")).add_to(route_map)
+    folium.Marker(end, icon=folium.Icon(color="red")).add_to(route_map)
+
+    # Add animation
+    TimestampedGeoJson(
+        create_animation(coords, speed),
+        period="PT1S",
+        add_last_point=True,
+        auto_play=True,
+        loop=False,
+        max_speed=1,
+        loop_button=True,
+        date_options="YYYY/MM/DD HH:mm:ss",
+        time_slider_drag_update=True,
+    ).add_to(route_map)
+
+    st.subheader("🛰️ Drone Route Animation")
+    st_folium(route_map, height=500, width=900)
+
+    # -----------------------------
+    # GPX Download
+    # -----------------------------
+    gpx_data = create_gpx(coords, altitude)
+
+    st.download_button(
+        "⬇️ Download Drone Route (GPX)",
+        gpx_data,
+        file_name="drone_route.gpx",
+        mime="application/gpx+xml"
+    )
+
+# -----------------------------
+# Reset
+# -----------------------------
+if st.button("Reset Points"):
+    st.session_state.clicks = []
